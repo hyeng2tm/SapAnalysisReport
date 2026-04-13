@@ -20,10 +20,12 @@ Professional SAP S/4HANA performance analysis tool that transforms raw monitorin
 ## 🛠 Setup & Usage
 
 ### 1. Prerequisites
+
 - Python 3.12+
 - Google Gemini API Key
 
 ### 2. Installation
+
 ```bash
 # Clone the repository
 git clone https://github.com/hyeng2tm/SapAnalysisReport
@@ -38,7 +40,9 @@ pip install -r requirements.txt
 ```
 
 ### 3. Environment Configuration
+
 Create a `.env` file in the root directory:
+
 ```env
 GOOGLE_API_KEY=your_gemini_api_key
 SMTP_SERVER=smtp.gmail.com
@@ -48,13 +52,17 @@ SMTP_PASS=your_app_password
 ```
 
 ### 4. Running the Analysis
+
 Place your SAP monitoring CSV exports in the `data/` directory and run:
+
 ```bash
 python main.py --data ./data --output ./reports
 ```
 
 ## 📊 Report Preview
+
 The generated report includes:
+
 1. **Executive Summary**: High-level system health dashboards.
 2. **Peak Window SQL Analysis**: Top resource consumers during load spikes.
 3. **Transactional Lock Wait Analysis**: Detailed lock contention mapping.
