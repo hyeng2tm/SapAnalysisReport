@@ -1,0 +1,361 @@
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from fpdf import FPDF
+import os
+import logging
+import re
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
+class SAPReporter:
+    def __init__(self, output_dir):
+        self.output_dir = output_dir
+
+    def generate_dual_axis_chart(self, cpu_df, windows):
+        """Generates a high-end dual-axis chart for executive reports."""
+        if cpu_df is None or cpu_df.empty:
+            return None
+        
+        # Premium Styling
+        plt.rcParams['font.family'] = 'sans-serif'
+        fig, ax1 = plt.subplots(figsize=(12, 5), dpi=150)
+        fig.patch.set_facecolor('#ffffff')
+        
+        # Colors
+        color_cpu = '#005a8d' # Professional Navy
+        color_mem = '#ef811d' # Deep Orange
+        
+        # CPU Axis (Left)
+        ax1.set_xlabel('Time (KST)', fontsize=10, color='#333333')
+        ax1.set_ylabel('CPU Utilization (%)', color=color_cpu, fontweight='bold', fontsize=10)
+        if not cpu_df['TIMESTAMP'].empty:
+            ax1.plot(cpu_df['TIMESTAMP'], cpu_df['CPU'], color=color_cpu, label='CPU (%)', linewidth=2, alpha=0.9)
+            # Area fill for CPU
+            ax1.fill_between(cpu_df['TIMESTAMP'], cpu_df['CPU'], color=color_cpu, alpha=0.05)
+
+        ax1.tick_params(axis='y', labelcolor=color_cpu)
+        ax1.set_ylim(0, 105)
+        
+        # Memory Axis (Right)
+        ax2 = ax1.twinx()
+        ax2.set_ylabel('Memory Utilization (%)', color=color_mem, fontweight='bold', fontsize=10)
+        if 'MEMORY_PCT' in cpu_df.columns and not cpu_df['TIMESTAMP'].empty:
+            ax2.plot(cpu_df['TIMESTAMP'], cpu_df['MEMORY_PCT'], color=color_mem, label='MEM (%)', linewidth=1.5, linestyle='--', alpha=0.7)
+        ax2.tick_params(axis='y', labelcolor=color_mem)
+        ax2.set_ylim(0, 105)
+
+        # Shade Peak Windows with a more subtle look
+        for win in windows:
+            ax1.axvspan(win['start'], win['end'], color='#ff0000', alpha=0.08, label='_nolegend_')
+            ax1.text(win['start'], win['max_cpu'] + 3, f"Peak {win['avg_cpu']:.0f}%", fontsize=8, color='#d32f2f', fontweight='bold')
+
+        title_date = cpu_df['TIMESTAMP'].iloc[0].strftime('%Y-%m-%d') if not cpu_df['TIMESTAMP'].empty else "N/A"
+        plt.title(f'SAP Resource Trend Analysis - {title_date}', fontsize=12, fontweight='bold', color='#1a1a1a', pad=15)
+        
+        # Clean Grid
+        ax1.grid(True, axis='y', linestyle=':', alpha=0.3)
+        ax1.spines['top'].set_visible(False)
+        ax1.spines['right'].set_visible(False)
+        
+        # Legend
+        lines1, labels1 = ax1.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right', frameon=False, fontsize=9)
+
+        fig.tight_layout()
+        chart_path = os.path.join(self.output_dir, 'resource_trend.png')
+        plt.savefig(chart_path, dpi=200, bbox_inches='tight')
+        plt.close()
+        return chart_path
+
+    def create_pdf_report(self, analysis_data, stats, windows, peak_sql, top_locks, output_filename="SAP_Performance_Report.pdf"):
+        """Generates a Premium Executive SAP Performance Report."""
+        pdf = FPDF()
+        
+        # Font Configuration
+        font_path = "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"
+        alt_font_path = "/System/Library/Fonts/AppleSDGothicNeo.ttc"
+        
+        font_name = "ArialUnicode"
+        if os.path.exists(font_path):
+            pdf.add_font("ArialUnicode", "", font_path)
+            pdf.add_font("ArialUnicode", "B", font_path)
+        
+        # Define Brand Colors
+        NAVY = (0, 48, 87)
+        SAP_BLUE = (0, 143, 211)
+        GREY_BG = (248, 249, 250)
+        TEXT_COL = (33, 37, 41)
+        RED_ALERT = (211, 47, 47)
+        GREEN_OK = (46, 125, 50)
+
+        # --- PAGE 1: COVER PAGE ---
+        pdf.add_page()
+        pdf.set_fill_color(*NAVY)
+        pdf.rect(0, 0, 210, 100, 'F') # Top Navy Bar
+        
+        pdf.set_y(40)
+        pdf.set_font(font_name, "B", 34)
+        pdf.set_text_color(255, 255, 255)
+        pdf.cell(0, 20, "SAP Analysis Report", ln=True, align='C')
+        pdf.set_font(font_name, "", 14)
+        pdf.cell(0, 10, "Technical Performance Deep Dive & RCA", ln=True, align='C')
+        
+        pdf.set_y(120)
+        pdf.set_text_color(*TEXT_COL)
+        pdf.set_font(font_name, "B", 18)
+        pdf.cell(0, 15, f"System: EMART SAP S/4HANA", ln=True, align='C')
+        pdf.set_font(font_name, "", 14)
+        pdf.cell(0, 10, f"Analysis Date: {stats['date']}", ln=True, align='C')
+        
+        pdf.set_y(220)
+        pdf.set_draw_color(*NAVY)
+        pdf.set_line_width(0.5)
+        pdf.line(40, pdf.get_y(), 170, pdf.get_y()) # Solid cover line cap
+        pdf.ln(5)
+        pdf.set_font(font_name, "", 10)
+        pdf.set_text_color(100, 100, 100)
+        pdf.cell(0, 10, "Generated by Antigravity AI SAP Observability Suite", ln=True, align='C')
+        pdf.cell(0, 5, "Confidential - For Internal Use Only", ln=True, align='C')
+
+        # --- PAGE 2: DASHBOARD & TREND ---
+        pdf.add_page()
+        pdf.set_margins(15, 15, 15)
+        pdf.set_y(15)
+        
+        # 1. Executive Summary & Dashboard
+        pdf.set_font(font_name, "B", 18)
+        pdf.set_text_color(*NAVY)
+        pdf.cell(0, 15, "01. Executive Summary", ln=True)
+        pdf.ln(5)
+        
+        # Health Dashboard Cards
+        pdf.set_fill_color(*GREY_BG)
+        pdf.rect(15, pdf.get_y(), 180, 25, 'F')
+        
+        # CPU Badge
+        cpu_status = "CRITICAL" if stats['cpu_max'] > 85 else "STABLE"
+        cpu_color = RED_ALERT if cpu_status == "CRITICAL" else GREEN_OK
+        
+        pdf.set_xy(20, pdf.get_y() + 5)
+        pdf.set_font(font_name, "B", 10)
+        pdf.set_text_color(*TEXT_COL)
+        pdf.cell(40, 5, "CPU STATUS", ln=False)
+        pdf.set_text_color(*cpu_color)
+        pdf.cell(40, 5, f"[{cpu_status}]", ln=True)
+        
+        pdf.set_x(20)
+        pdf.set_font(font_name, "", 9)
+        pdf.set_text_color(80, 80, 80)
+        pdf.cell(0, 5, f"Peak: {stats['cpu_max']:.1f}% | Avg: {stats['cpu_avg']:.1f}%", ln=True)
+        
+        # Memory Badge (Shifted right)
+        pdf.set_xy(110, pdf.get_y() - 10)
+        pdf.set_font(font_name, "B", 10)
+        pdf.set_text_color(*TEXT_COL)
+        pdf.cell(40, 5, "MEMORY STATUS", ln=False)
+        pdf.set_text_color(*GREEN_OK)
+        pdf.cell(40, 5, "[OPTIMAL]", ln=True)
+        
+        pdf.set_x(110)
+        pdf.set_font(font_name, "", 9)
+        pdf.set_text_color(80, 80, 80)
+        pdf.cell(0, 5, f"Max: {stats['mem_max_pct']:.1f}% | Avg: {stats['mem_avg_pct']:.1f}%", ln=True)
+        
+        pdf.set_y(pdf.get_y() + 15)
+        
+        # 2. Resource Trend Visualization
+        chart_path = analysis_data.get('chart_path')
+        if chart_path and os.path.exists(chart_path):
+            pdf.image(chart_path, x=15, w=180)
+            pdf.ln(5)
+            
+        # AI Summary (Inside a box)
+        insights = analysis_data.get('ai_insights', '')
+        chart_match = re.search(r'3\.\s*차트 해석.*?:(.*?)\n\d\.', insights, re.DOTALL)
+        if chart_match:
+            pdf.set_fill_color(240, 244, 248)
+            pdf.set_font(font_name, "", 9)
+            pdf.set_text_color(50, 50, 50)
+            pdf.multi_cell(180, 6, f"Summary: {chart_match.group(1).strip()}", border=0, fill=True)
+        
+        pdf.ln(10)
+
+        # --- PAGE 3: DETAILED ANALYSIS ---
+        pdf.add_page()
+        
+        # 3. SQL Analysis Table
+        pdf.set_font(font_name, "B", 16)
+        pdf.set_text_color(*NAVY)
+        pdf.cell(0, 15, "02. Peak Window SQL Analysis", ln=True)
+        pdf.ln(2)
+        
+        if peak_sql is not None and not peak_sql.empty:
+            cols = ["Program", "Query (Truncated)", "Execs", "Time(s)", "Memory", "Window"]
+            from fpdf.fonts import FontFace
+            
+            pdf.set_font(font_name, "", 9)
+            pdf.set_line_width(0.5)
+            pdf.set_dash_pattern() # Solid for header and top cap
+            
+            with pdf.table(col_widths=(25, 60, 15, 20, 25, 35), 
+                          text_align=("C", "L", "R", "R", "R", "C"), 
+                          line_height=9.0,
+                          borders_layout="HORIZONTAL_LINES",
+                          headings_style=FontFace(fill_color=NAVY, color=(255, 255, 255), emphasis="BOLD")) as table:
+                header = table.row()
+                for h in cols: header.cell(h)
+                
+                # Switch to thin dash pattern for data rows
+                pdf.set_line_width(0.1)
+                pdf.set_dash_pattern(dash=1, gap=1)
+                
+                num_rows = len(peak_sql)
+                for i, row in peak_sql.reset_index(drop=True).iterrows():
+                    # If this is the last row, set line to solid for the bottom cap
+                    if i == num_rows - 1:
+                        pdf.set_dash_pattern()
+                        pdf.set_line_width(0.5)
+                        
+                    row_data = table.row()
+                    if i % 2 == 1: pdf.set_fill_color(245, 247, 249)
+                    else: pdf.set_fill_color(255, 255, 255)
+                    
+                    row_data.cell(str(row.get('ABAP_PROGRAM', 'N/A'))[:20])
+                    row_data.cell(str(row.get('SQL_TEXT', 'N/A'))[:80])
+                    row_data.cell(f"{int(row.get('EXEC_COUNT', 0)):,}")
+                    row_data.cell(f"{row.get('TOTAL_EXEC_TIME_SEC', 0):.1f}")
+                    mem_val = row.get('TOTAL_EXECUTION_MEMORY_SIZE', 0)
+                    row_data.cell(f"{mem_val/1024**2:.1f}MB" if mem_val < 1024**3 else f"{mem_val/1024**3:.1f}GB")
+                    row_data.cell(str(row.get('peak_window', 'Global')))
+            
+            pdf.set_dash_pattern() # Reset pattern
+        
+        pdf.ln(15)
+
+        # --- SECTION 03: TRANSACTIONAL LOCK WAIT ANALYSIS ---
+        pdf.set_font(font_name, "B", 16)
+        pdf.set_text_color(*NAVY)
+        pdf.cell(0, 15, "03. Transactional Lock Wait Analysis", ln=True)
+        pdf.ln(2)
+        
+        if top_locks is not None and not top_locks.empty:
+            from fpdf.fonts import FontFace
+            pdf.set_font(font_name, "", 9)
+            pdf.set_line_width(0.5)
+            pdf.set_dash_pattern()
+            
+            with pdf.table(col_widths=(35, 45, 25, 75), 
+                          text_align=("L", "L", "R", "L"), 
+                          line_height=9.0,
+                          borders_layout="HORIZONTAL_LINES",
+                          headings_style=FontFace(fill_color=NAVY, color=(255, 255, 255), emphasis="BOLD")) as table:
+                header = table.row()
+                for h in ["Program", "Accessed Tables", "Wait Time (s)", "SQL (Truncated)"]:
+                    header.cell(h)
+                
+                pdf.set_line_width(0.1)
+                pdf.set_dash_pattern(1, 1)
+                
+                num_locks = len(top_locks)
+                for i, row in top_locks.reset_index(drop=True).iterrows():
+                    if i == num_locks - 1:
+                        pdf.set_dash_pattern()
+                        pdf.set_line_width(0.5)
+                    r = table.row()
+                    if i % 2 == 1: pdf.set_fill_color(245, 247, 249)
+                    else: pdf.set_fill_color(255, 255, 255)
+                    
+                    r.cell(str(row.get('ABAP_PROGRAM', 'N/A'))[:25])
+                    r.cell(str(row.get('ACCESSED_TABLES', 'N/A'))[:40])
+                    r.cell(f"{row.get('TOTAL_LOCK_WAIT_SEC', 0):,.1f}")
+                    r.cell(str(row.get('SQL_TEXT', 'N/A'))[:100])
+            pdf.set_dash_pattern()
+        else:
+            pdf.set_font(font_name, "", 10)
+            pdf.set_text_color(*TEXT_COL)
+            pdf.cell(0, 10, "No significant database lock wait events detected in the current monitoring interval.", ln=True)
+
+        pdf.ln(15)
+
+        # 04. RCA & Solution Table
+        pdf.set_font(font_name, "B", 16)
+        pdf.set_text_color(*NAVY)
+        pdf.cell(0, 15, "04. Root Cause Analysis & Solutions", ln=True)
+        pdf.ln(2)
+        
+        rca_data = []
+        rca_match = re.search(r'\[RCA_START\]\n(.*?)\n\[RCA_END\]', insights, re.DOTALL)
+        if rca_match:
+            lines = rca_match.group(1).strip().split('\n')
+            for line in lines:
+                if '|' in line and "대상" not in line and "우선순위" not in line:
+                    parts = line.split('|')
+                    if len(parts) >= 5: rca_data.append(parts[:6])
+        
+        if rca_data:
+            from fpdf.fonts import FontFace
+            pdf.set_font(font_name, "", 9)
+            pdf.set_line_width(0.5)
+            pdf.set_dash_pattern() 
+            
+            # Pri (15), Target (30), Peak (20), Metric (25), Cause (25), Solution (65) = 180 total
+            with pdf.table(col_widths=(15, 30, 20, 25, 25, 65), 
+                          text_align=("C", "L", "C", "C", "C", "L"), 
+                          line_height=9.0,
+                          borders_layout="HORIZONTAL_LINES",
+                          headings_style=FontFace(fill_color=NAVY, color=(255, 255, 255), emphasis="BOLD")) as table:
+                header = table.row()
+                for h in ["Pri", "Target", "Peak", "Metric", "Cause", "Proposed Solution"]:
+                    header.cell(h)
+                
+                pdf.set_line_width(0.1)
+                pdf.set_dash_pattern(dash=1, gap=1)
+                
+                num_rca = len(rca_data)
+                for i, row in enumerate(rca_data):
+                    if i == num_rca - 1:
+                        pdf.set_dash_pattern()
+                        pdf.set_line_width(0.5)
+                    r = table.row()
+                    if i % 2 == 1: pdf.set_fill_color(245, 247, 249)
+                    else: pdf.set_fill_color(255, 255, 255)
+                    
+                    # Handle Priority Column with Color Circles
+                    priority = str(row[0]).strip()
+                    pri_color = TEXT_COL # Default
+                    if "P1" in priority: pri_color = (211, 47, 47) # Red
+                    elif "P2" in priority: pri_color = (255, 143, 0) # Amber
+                    elif "P3" in priority: pri_color = (46, 125, 50) # Green
+                    
+                    r.cell(f"● {priority}", style=FontFace(color=pri_color))
+                    
+                    # Other cells
+                    for cell in row[1:]:
+                        r.cell(str(cell))
+            
+            pdf.set_dash_pattern()
+
+        # --- FINAL SECTION: AI OPINION ---
+        pdf.ln(10)
+        pdf.set_font(font_name, "B", 14)
+        pdf.set_text_color(*SAP_BLUE)
+        pdf.cell(0, 15, "05. AI Final Recommendation", ln=True)
+        
+        opinion_match = re.search(r'7\.\s*AI 종합 의견.*?:(.*?)$', insights, re.DOTALL)
+        if opinion_match:
+            pdf.set_font(font_name, "", 10)
+            pdf.set_text_color(*TEXT_COL)
+            pdf.multi_cell(180, 6, opinion_match.group(1).strip(), border="L")
+        
+        # Footer
+        pdf.set_y(-20)
+        pdf.set_font(font_name, "", 8)
+        pdf.set_text_color(180, 180, 180)
+        pdf.cell(0, 10, f"SAP Performance Automated Deep Dive | {datetime.now().strftime('%Y-%m-%d %H:%M')} | Page {pdf.page_no()}", align='C')
+
+        final_path = os.path.join(self.output_dir, output_filename)
+        pdf.output(final_path)
+        return final_path
