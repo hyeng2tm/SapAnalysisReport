@@ -69,21 +69,19 @@ class SAPAIAnalyzer:
             return self._generate_dummy_insights(stats, windows, top_cpu_label, top_lock_label)
 
     def _generate_dummy_insights(self, stats, windows, top_cpu_label, top_lock_label):
-        win_str = windows[0]['start'].strftime('%H:%M') if windows else "N/A"
-        
-        return f"""
+        return """
 02. Summary (요약):
-금일 이마트 SAP DB 서버는 평균 CPU {stats.get('cpu_avg'):.1f}%로 전반적으로 안정적이나, {win_str} 경 최대 {stats.get('cpu_max')}%의 고부하가 발생하였습니다. {win_str} 전후의 대량 집계 배치 작업 시간대에 각별한 주의가 필요합니다.
+AI 연결 안됨 (Gemini API 할당량 초과 또는 연결 실패)
 
 03. 차트 해석:
-{win_str} 부근에서 CPU 사용량이 급증할 때 메모리는 큰 변동이 없는 것으로 보아, 물리적 I/O보다는 복잡한 연산 중심의 SQL 처리가 부하를 견인한 것으로 해석됩니다.
+AI 연결 안됨
 
 05. Lock / Wait / 동시성 분석:
-실제 SQL 락 대기 정보를 분석한 결과, 피크 시간대에 {top_lock_label} 프로그램 등에서 세션 경합이 관찰되었습니다. 이는 동시성 제어 로직 최적화가 필요한 영역입니다.
+AI 연결 안됨
 
 06. 원인 분석 및 해결 방안 (RCA Table):
-상위 우선순위 분석 결과, {top_cpu_label}가 가장 높은 피크 기여도를 보이며 주된 튜닝 대상으로 식별되었습니다.
+AI 연결 안됨
 
 07. 종합 진단 및 운영 시사점:
-금일 부하 유형은 '{top_cpu_label}' 중심의 집계형 부하와 일부 동시성 락 경합이 결합된 복합형으로 분류됩니다. 단기적으로는 해당 프로그램의 쿼리 튜닝이 시급하며, 실행 시간 분산을 통한 피크 평탄화가 필요합니다.
+AI 연결 안됨
 """

@@ -100,8 +100,8 @@ class SAPReporter:
         
         # AI Insight integration
         insights = analysis_data.get('ai_insights', '')
-        summary_match = re.search(r'2\.\s*Summary.*?:\n(.*?)\n\d\.', insights, re.DOTALL)
-        summary_text = summary_match.group(1).strip() if summary_match else "부하 분석 데이터를 기반으로 전반적인 요약 정보를 생성하고 있습니다."
+        summary_match = re.search(r'\d+\.\s*Summary.*?:\n(.*?)\n\d+\.', insights, re.DOTALL)
+        summary_text = summary_match.group(1).strip() if summary_match else "AI 연결 안됨 (데이터 기반 요약 기능 비활성화)"
         pdf.multi_cell(190, 7, summary_text, border=0)
         pdf.ln(8)
 
@@ -259,7 +259,7 @@ class SAPReporter:
         ensure_space(100)
         pdf.set_font(font_name, "B", 14)
         pdf.set_text_color(*NAVY)
-        pdf.cell(0, 10, "8. 종합 진단 및 시니어 분석 제언", ln=True)
+        pdf.cell(0, 10, "8. 종합 진단 및 기술적 제언", ln=True)
         pdf.ln(2)
         
         # 8-1. 원인 및 해결방안 요약 Table (from Guideline v5)
@@ -336,23 +336,15 @@ class SAPReporter:
         # 8-4. 시니어 분석가 최종 총평
         pdf.set_font(font_name, "B", 11)
         pdf.set_text_color(*NAVY)
-        pdf.cell(0, 8, "[ 시니어 분석가 최종 총평 ]", ln=True)
+        pdf.cell(0, 8, "[ 시스템 최종 진단 및 총평 ]", ln=True)
         
         diag_text = ""
-        opinion_match = re.search(r'7\.\s*종합 진단.*?:\n?(.*?)$', insights, re.DOTALL)
+        opinion_match = re.search(r'\d+\.\s*종합 진단.*?:\n?(.*?)$', insights, re.DOTALL)
         if opinion_match:
             diag_text = opinion_match.group(1).strip()
         
-        if not diag_text or "중입니다" in diag_text:
-            s = stats if stats else {}
-            max_cpu = s.get('cpu_max', 0)
-            diag_text = f"분석 결과, 시스템 최대 부하 {max_cpu:.1f}%가 관측되었습니다. "
-            if "[V]" in is_lock:
-                diag_text += "특정 마스터 테이블(NRIV 등)의 논리적 락 경합이 전체 시스템 응답 속도를 저해하고 있습니다. "
-            if "[V]" in is_batch:
-                diag_text += "정기 배치 작업의 동시 실행으로 인한 CPU 자원 고갈이 확인되므로 시간표 재조정이 필요합니다. "
-            if "[V]" in is_agg:
-                diag_text += "비정형 대량 집계성 쿼리에 의한 Full Scan 부하가 관찰되므로 인덱스 전략 보강이 시급합니다. "
+        if not diag_text or "중입니다" in diag_text or "AI 연결 안됨" in diag_text:
+            diag_text = "AI 연결 안됨 (기술적 수치 데이터 기반의 수동 진단 필요)"
         
         pdf.set_font(font_name, "", 10)
         pdf.set_text_color(*TEXT_COL)
@@ -369,7 +361,7 @@ class SAPReporter:
         pdf.set_y(-15)
         pdf.set_font(font_name, "", 7)
         pdf.set_text_color(150, 150, 150)
-        pdf.cell(0, 10, f"Senior SAP Basis Analyst Report | {datetime.now().strftime('%Y-%m-%d')} | Page {pdf.page_no()}", align='R')
+        pdf.cell(0, 10, f"SAP Basis Performance Report | {datetime.now().strftime('%Y-%m-%d')} | Page {pdf.page_no()}", align='R')
         
         report_path = os.path.join(self.output_dir, output_filename)
         pdf.output(report_path)
