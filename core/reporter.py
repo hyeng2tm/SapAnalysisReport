@@ -76,12 +76,13 @@ class SAPReporter:
         GRAY_LINE = (200, 200, 200)
 
         def ensure_space(h):
-            if pdf.get_y() + h > 280:
+            # Reduced threshold from 280 to 275 to prevent edge-case page breaks
+            if pdf.get_y() + h > 275:
                 pdf.add_page()
                 return True
             return False
 
-        # --- 1. TITLE (제목) ---
+        # --- TITLE (제목 - 번호 제외) ---
         pdf.add_page()
         pdf.set_font(font_name, "B", 22)
         pdf.set_text_color(*NAVY)
@@ -91,25 +92,32 @@ class SAPReporter:
         pdf.line(10, 35, 200, 35)
         pdf.ln(10)
 
-        # --- 2. Summary (요약) ---
+        # --- 1. Summary (요약) ---
         ensure_space(40)
         pdf.set_font(font_name, "B", 14)
-        pdf.cell(0, 10, "2. Summary (요약)", ln=True)
+        pdf.cell(0, 10, "1. Summary (요약)", ln=True)
         pdf.set_font(font_name, "", 10)
         pdf.set_text_color(*TEXT_COL)
         
         # AI Insight integration
         insights = analysis_data.get('ai_insights', '')
-        summary_match = re.search(r'\d+\.\s*Summary.*?:\n(.*?)\n\d+\.', insights, re.DOTALL)
+        # summary_match = re.search(r'1\.\s*Summary.*?:\n(.*?)\n\d\.', insights, re.DOTALL)
+        summary_match = re.search(r'1\.\s*Summary\s*[:*]*\s*(.*?)(?=\n\s*[*#]*\s*\d\.|\[|$)', insights, re.DOTALL)
         summary_text = summary_match.group(1).strip() if summary_match else "AI 연결 안됨 (데이터 기반 요약 기능 비활성화)"
+        # More robust removal: if the first line contains 'Summary' or '요약', remove that whole line.
+        summary_lines = summary_text.split('\n')
+        if summary_lines and ('Summary' in summary_lines[0] or '요약' in summary_lines[0]):
+            summary_text = '\n'.join(summary_lines[1:]).strip()
+            
+        summary_text = re.sub(r'\n\s*---+\s*$', '', summary_text).strip()
         pdf.multi_cell(190, 7, summary_text, border=0)
-        pdf.ln(8)
+        pdf.ln(4)
 
-        # --- 3. 일별 CPU/메모리 요약 테이블 ---
+        # --- 2. 일별 CPU/메모리 요약 테이블 ---
         ensure_space(50)
         pdf.set_font(font_name, "B", 14)
         pdf.set_text_color(*NAVY)
-        pdf.cell(0, 10, "3. 일별 CPU/메모리 요약 테이블", ln=True)
+        pdf.cell(0, 10, "2. 일별 CPU/메모리 요약 테이블", ln=True)
         pdf.set_font(font_name, "", 9)
         
         with pdf.table(col_widths=(25, 20, 20, 20, 20, 25, 30, 15, 15), 
@@ -135,27 +143,29 @@ class SAPReporter:
         pdf.cell(0, 6, "* CPU95는 95th percentile 기준이며, 메모리평균은 Allocation Limit 대비 사용율입니다.", ln=True)
         pdf.ln(5)
 
-        # --- 4. 차트 출력 ---
+        # --- 3. 차트 출력 및 해석 ---
         ensure_space(110)
         pdf.set_font(font_name, "B", 14)
         pdf.set_text_color(*NAVY)
-        pdf.cell(0, 10, "4. 차트 출력", ln=True)
+        pdf.cell(0, 10, "3. 차트 출력 및 해석", ln=True)
         
         chart_path = analysis_data.get('chart_path')
         if chart_path and os.path.exists(chart_path):
             pdf.image(chart_path, x=15, w=180)
             pdf.ln(5)
-            # Interpretation Text
+            # Interpretation Text (Try to get from AI Section 3)
             pdf.set_font(font_name, "", 9)
             pdf.set_text_color(*TEXT_COL)
-            pdf.multi_cell(190, 6, "측정 시간 동안의 시스템 리소스 트렌드입니다. 빨간색 하이라이트 영역은 지침에 따라 선정된 주요 피크 구간을 나타냅니다. CPU와 메모리가 동시에 급증하는 구간은 배치 연산 또는 대량 데이터 처리가 의심됩니다.", border="L")
+            chart_match = re.search(r'3\.\s*차트 해석.*?:\n(.*?)\n\d\.', insights, re.DOTALL)
+            chart_text = chart_match.group(1).strip() if chart_match else "측정 시간 동안의 시스템 리소스 트렌드입니다. 빨간색 하이라이트 영역은 지침에 따라 선정된 주요 피크 구간을 나타냅니다. CPU와 메모리가 동시에 급증하는 구간은 배치 연산 또는 대량 데이터 처리가 의심됩니다."
+            pdf.multi_cell(190, 6, chart_text, border="L")
         pdf.ln(10)
 
-        # --- 5. Peak 구간 요약 테이블 ---
+        # --- 4. Peak 구간 요약 테이블 ---
         ensure_space(50)
         pdf.set_font(font_name, "B", 14)
         pdf.set_text_color(*NAVY)
-        pdf.cell(0, 10, "5. Peak 구간 요약 테이블", ln=True)
+        pdf.cell(0, 10, "4. Peak 구간 요약 테이블", ln=True)
         
         if windows:
             pdf.set_font(font_name, "", 8)
@@ -179,11 +189,11 @@ class SAPReporter:
             
         pdf.ln(8)
 
-        # --- 6. Peak Load 구간별 SQL 영향도 분석 ---
+        # --- 5. Peak Load 구간별 SQL 영향도 분석 ---
         ensure_space(60)
         pdf.set_font(font_name, "B", 14)
         pdf.set_text_color(*NAVY)
-        pdf.cell(0, 10, "6. Peak Load 구간별 SQL 영향도 분석", ln=True)
+        pdf.cell(0, 10, "5. Peak Load 구간별 SQL 영향도 분석", ln=True)
         
         pdf.set_font(font_name, "", 9)
         pdf.set_text_color(*TEXT_COL)
@@ -215,13 +225,22 @@ class SAPReporter:
                     mem_str = f"총 {self.format_bytes(r.get('TOTAL_MEM_peak', 0))}\n평균 {self.format_bytes(r.get('AVG_MEM_peak', 0))}\n최대 {self.format_bytes(r.get('MAX_MEM_peak', 0))}"
                     row.cell(mem_str)
                     row.cell(str(r.get('CAUSE', '-')))
+            pdf.ln(2)
+            # AI SQL Commentary
+            pdf.set_font(font_name, "", 9)
+            pdf.set_text_color(*TEXT_COL)
+            # sql_comm_match = re.search(r'5\.\s*SQL 영향도 분석 Commentary.*?:\n(.*?)\n\s*[*#]*\s*\d\.', insights, re.DOTALL)
+            sql_comm_match = re.search(r'5\.\s*SQL 영향도 분석 Commentary\s*[:*]*\s*(.*?)(?=\n\s*[*#-]*\s*6\.|\[|$)', insights, re.DOTALL)
+            sql_comm = sql_comm_match.group(1).strip() if sql_comm_match else "상위 SQL 실행 통계에 기반하여 AI가 부하 패턴을 분석 중입니다."
+            sql_comm = re.sub(r'\n\s*---+\s*$', '', sql_comm).strip()
+            pdf.multi_cell(190, 6, sql_comm, border="L")
         pdf.ln(8)
 
-        # --- 7. 서비스 대기(Lock Wait) 분석 ---
+        # --- 6. 서비스 대기(Lock Wait) 분석 ---
         ensure_space(60)
         pdf.set_font(font_name, "B", 14)
         pdf.set_text_color(*NAVY)
-        pdf.cell(0, 10, "7. 서비스 대기(Lock Wait) 분석", ln=True)
+        pdf.cell(0, 10, "6. 서비스 대기(Lock Wait) 분석", ln=True)
         
         pdf.set_font(font_name, "", 9)
         pdf.set_text_color(*TEXT_COL)
@@ -248,21 +267,28 @@ class SAPReporter:
                     row.cell(str(r.get('SQL_LABEL', 'N/A'))[:100])
                     row.cell(f"{int(r.get('LOCK_COUNT', 0)):,}")
                     row.cell(f"{r.get('TOTAL_LOCK_WAIT_SEC_peak', 0):,.1f}s")
-                    row.cell(self.format_bytes(r.get('TOTAL_MEM_peak', 0)))
-                    row.cell(str(r.get('CAUSE', '분석 중')))
+            pdf.ln(2)
+            # AI Lock Commentary
+            pdf.set_font(font_name, "", 9)
+            pdf.set_text_color(*TEXT_COL)
+            # lock_comm_match = re.search(r'6\.\s*서비스 대기\(Lock Wait\) 분석 Commentary.*?:\n(.*?)\n\s*[*#]*\s*\d\.', insights, re.DOTALL)
+            lock_comm_match = re.search(r'6\.\s*서비스 대기\(Lock Wait\) 분석 Commentary\s*[:*]*\s*(.*?)(?=\n\s*[*#-]*\s*7\.|\[|$)', insights, re.DOTALL)
+            lock_comm = lock_comm_match.group(1).strip() if lock_comm_match else "탐지된 Lock 경합 데이터에 기반하여 AI가 병목 원인을 분석 중입니다."
+            lock_comm = re.sub(r'\n\s*---+\s*$', '', lock_comm).strip()
+            pdf.multi_cell(190, 6, lock_comm, border="L")
         else:
             pdf.set_font(font_name, "", 10)
             pdf.cell(0, 10, "분석 시간 내 유의미한 Lock 지연 현상이 발견되지 않았습니다.", ln=True)
         pdf.ln(10)
 
-        # --- 8. 종합 진단 및 시니어 분석 제언 ---
+        # --- 7. 종합 진단 및 기술적 제언 ---
         ensure_space(100)
         pdf.set_font(font_name, "B", 14)
         pdf.set_text_color(*NAVY)
-        pdf.cell(0, 10, "8. 종합 진단 및 기술적 제언", ln=True)
+        pdf.cell(0, 10, "7. 종합 진단 및 기술적 제언", ln=True)
         pdf.ln(2)
         
-        # 8-1. 원인 및 해결방안 요약 Table (from Guideline v5)
+        # 7-1. 원인 및 해결방안 요약 Table (from Guideline v5)
         rca_list = []
         source_df = global_top if global_top is not None and not global_top.empty else top_sql
         
@@ -290,79 +316,76 @@ class SAPReporter:
                     row.cell(item['count']); row.cell(item['time']); row.cell(item['mem']); row.cell(item['action'])
         pdf.ln(5)
 
-        # 8-2. CPU 부하 원인 유형 (User Guideline v5)
+        # 7-2. CPU 부하 원인 유형 (AI Driven)
         pdf.set_font(font_name, "B", 11)
         pdf.set_text_color(*NAVY)
         pdf.cell(0, 8, "[ CPU 부하 원인 유형 ]", ln=True)
         pdf.set_font(font_name, "", 10)
         pdf.set_text_color(*TEXT_COL)
         
-        # Detection logic for checkboxes
-        causes = ""
-        if top_sql is not None and not top_sql.empty:
-            causes += " ".join(top_sql['CAUSE'].tolist())
-        if top_locks is not None and not top_locks.empty:
-            causes += " ".join(top_locks['CAUSE'].tolist())
+        cause_type_match = re.search(r'\[부하 원인 유형\]\s*[:*]*\s*(.*?)(?=\n\s*[*#]*\s*\[개선 포인트\]|\n\s*[*#]*\s*\[최종 진단\]|$)', insights, re.DOTALL)
+        cause_type_ai = cause_type_match.group(1).strip() if cause_type_match else ""
             
-        is_batch = "[V]" if "배치" in causes else "[ ]"
-        is_lock = "[V]" if "락" in causes or "경합" in causes else "[ ]"
-        is_agg = "[V]" if "집계" in causes or "스캔" in causes else "[ ]"
+        is_batch = "[V]" if "배치" in cause_type_ai else "[ ]"
+        is_lock = "[V]" if "동시성" in cause_type_ai or "락" in cause_type_ai else "[ ]"
+        is_agg = "[V]" if "집계" in cause_type_ai or "스캔" in cause_type_ai else "[ ]"
         
         pdf.cell(0, 7, f"  {is_batch} 배치성 부하: 정기 배치 집중", ln=True)
         pdf.cell(0, 7, f"  {is_lock} 동시성(락): NRIV, COSP_BAK Lock 경합", ln=True)
         pdf.cell(0, 7, f"  {is_agg} 대량 집계 / 전체 스캔: 대량 UPDATE/UPSERT", ln=True)
         pdf.ln(5)
 
-        # 8-3. 개선 포인트 (User Guideline v5)
+        # 7-3. 개선 포인트 (AI Driven)
         pdf.set_font(font_name, "B", 11)
         pdf.set_text_color(*NAVY)
         pdf.cell(0, 8, "[ 개선 포인트 ]", ln=True)
         
-        pdf.set_font(font_name, "B", 10)
-        pdf.set_text_color(200, 0, 0) # Red for Short-term
-        pdf.cell(20, 7, "  단기:", ln=0)
-        pdf.set_font(font_name, "", 10)
-        pdf.set_text_color(*TEXT_COL)
-        pdf.cell(0, 7, "피크 시간대 배치 Job 분산, NRIV 접근 Job 직렬화/버퍼링", ln=True)
+        # points_match = re.search(r'\[개선 포인트\]\s*[:*]*\s*(.*?)(?=\n\s*[-*]|\[최종 진단\]|$)', insights, re.DOTALL)
+        points_match = re.search(r'\[개선 포인트\]\s*[:*]*\s*(.*?)(?=\n\s*[*#]*\s*\[최종 진단\]|$)', insights, re.DOTALL)
+        points_ai = points_match.group(1).strip() if points_match else "AI가 데이터 기반 최적화 방안을 분석 중입니다."
         
-        pdf.set_font(font_name, "B", 10)
-        pdf.set_text_color(0, 100, 0) # Green for Medium-term
-        pdf.cell(20, 7, "  중기:", ln=0)
         pdf.set_font(font_name, "", 10)
         pdf.set_text_color(*TEXT_COL)
-        pdf.cell(0, 7, "원가·정산 계열 집계 구조 개선, 반복 SQL 사전 집계/캐시 도입", ln=True)
+        pdf.multi_cell(190, 7, f"  {points_ai}", border=0)
         pdf.ln(5)
 
-        # 8-4. 시니어 분석가 최종 총평
+        # 7-4. 최종 총평
         pdf.set_font(font_name, "B", 11)
         pdf.set_text_color(*NAVY)
         pdf.cell(0, 8, "[ 시스템 최종 진단 및 총평 ]", ln=True)
         
         diag_text = ""
-        opinion_match = re.search(r'\d+\.\s*종합 진단.*?:\n?(.*?)$', insights, re.DOTALL)
+        opinion_match = re.search(r'\[최종 진단\]\s*[:*]*\s*(.*?)$', insights, re.DOTALL)
         if opinion_match:
             diag_text = opinion_match.group(1).strip()
         
-        if not diag_text or "중입니다" in diag_text or "AI 연결 안됨" in diag_text:
-            diag_text = "AI 연결 안됨 (기술적 수치 데이터 기반의 수동 진단 필요)"
+        if not diag_text or "중입니다" in diag_text or "AI 연결 실패" in diag_text:
+            diag_text = "AI 연결 안됨 (기술적 지표 기반의 수동 진단 필요)"
         
         pdf.set_font(font_name, "", 10)
         pdf.set_text_color(*TEXT_COL)
         pdf.multi_cell(190, 7, diag_text, border="L")
         
-        pdf.ln(10)
-        # Methodology Note
+        # --- End of Report (Footer & Note) ---
+        # Disable auto page break to prevent blank page at the very end
+        pdf.set_auto_page_break(False)
+        
+        # Methodology Note (Moved up slightly)
+        pdf.set_y(-25)
         pdf.set_font(font_name, "", 8)
         pdf.set_text_color(100, 100, 100)
-        methodology_text = "※ HANA 공식 Plan Cache 지표(총/평균/최대/횟수/락)를 기반으로 후보를 고르라는 SAP Help Portal 권고를 그대로 따르며(2단계·3단계), Peak Window는 SRE 표준의 percentile+절대 임계 합리화를 적용하였습니다."
-        pdf.multi_cell(190, 5, methodology_text, border=0, align='L')
+        methodology_text = "※ HANA 공식 Plan Cache 지표를 기반으로 후보를 선정하며(SAP Help Portal 권고 준수), Peak Window는 SRE 표준 임계치를 적용하였습니다."
+        pdf.multi_cell(190, 4, methodology_text, border=0, align='L')
 
         # Footer
         pdf.set_y(-15)
         pdf.set_font(font_name, "", 7)
         pdf.set_text_color(150, 150, 150)
-        pdf.cell(0, 10, f"SAP Basis Performance Report | {datetime.now().strftime('%Y-%m-%d')} | Page {pdf.page_no()}", align='R')
+        pdf.cell(0, 10, f"SAP Performance Analysis Report | {datetime.now().strftime('%Y-%m-%d')} | Page {pdf.page_no()}", align='R')
         
+        # Restore auto page break just in case
+        pdf.set_auto_page_break(True, 15)
+
         report_path = os.path.join(self.output_dir, output_filename)
         pdf.output(report_path)
         return report_path

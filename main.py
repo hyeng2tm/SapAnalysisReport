@@ -68,6 +68,12 @@ def run_analysis(data_dir, output_dir, recipient_email=None):
         }
     
     # 3. Generate Report
+    # NEW: AI Specific Actions for Section 7
+    if global_top is not None and not global_top.empty:
+        specific_actions = analyzer.generate_specific_actions(global_top)
+        if specific_actions:
+            global_top['ACTION'] = specific_actions
+
     reporter = SAPReporter(output_dir)
     chart_path = reporter.generate_unified_axis_chart(cpu_df, windows)
     
