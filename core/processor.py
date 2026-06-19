@@ -330,7 +330,7 @@ class SAPDataProcessor:
                     time_q90 = active_sql_df['EXEC_TIME_win'].quantile(0.9)
                     is_top_10_time = (merged['EXEC_TIME_win'] >= time_q90) & is_active_sql
                     is_slow_avg = (merged['AVG_EXEC_TIME_win'] >= 1.0) & is_active_sql
-                    is_heavy_mem = (merged['MAX_MEM_win'] >= 512 * 1024 * 1024) & is_active_sql
+                    is_heavy_mem = (merged['MAX_MEM_win'] >= 1024 * 1024 * 1024) & is_active_sql
                     
                     # Also include any item that has significant Lock Wait impact even if SQL is 0?
                     # No, this loop is for top_sql. Pure lock items go to top_locks later via full_peak_df.
@@ -345,7 +345,7 @@ class SAPDataProcessor:
             
             def map_rca(r):
                 if r['LOCK_TIME_win'] > 100 or "NRIV" in str(r['SQL_LABEL']): return "동시성(락): 테이블 경합"
-                if r['MAX_MEM_win'] > 512*1024*1024: return "대량 집계 / 전체 스캔"
+                if r['MAX_MEM_win'] > 1024*1024*1024: return "대량 집계 / 전체 스캔"
                 return "고부하 트랜잭션 도출"
 
             full_peak_df['CAUSE'] = full_peak_df.apply(map_rca, axis=1)
@@ -378,7 +378,8 @@ class SAPDataProcessor:
             is_high_ratio_lock = (full_peak_df['LOCK_WAIT_RATIO_peak'] >= 0.3)
             is_top_10_lock = (full_peak_df['TOTAL_LOCK_WAIT_SEC_peak'] >= lock_thr)
             
-            is_lock_candidate = is_positive_lock & is_high_ratio_lock & is_top_10_lock
+            is_active = (full_peak_df['EXEC_COUNT_peak'] > 0) | (full_peak_df['TOTAL_MEM_peak'] > 0)
+            is_lock_candidate = is_positive_lock & is_high_ratio_lock & is_top_10_lock & is_active
             top_locks = full_peak_df[is_lock_candidate].copy()
             top_locks = top_locks.sort_values(['PEAK_PERIOD', 'TOTAL_LOCK_WAIT_SEC_peak'], ascending=[True, False]).groupby('PEAK_PERIOD').head(3).reset_index(drop=True)
 
