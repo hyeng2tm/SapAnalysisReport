@@ -7,6 +7,8 @@ import os
 import logging
 import re
 import platform
+import urllib.request
+import tempfile
 from datetime import datetime
 from fpdf.fonts import FontFace
 
@@ -15,6 +17,109 @@ logger = logging.getLogger(__name__)
 class SAPReporter:
     def __init__(self, output_dir):
         self.output_dir = output_dir
+        self.font_name = None
+
+    def get_unicode_font_path(self):
+        """
+        Attempt to find or download a Unicode font that supports CJK characters.
+        Returns the font path and font name to use in FPDF.
+        CJK fonts are prioritized over other Unicode fonts.
+        """
+        # First priority: Arial Unicode MS (known to have full Korean support)
+        arial_unicode_paths = [
+            r"C:\Windows\Fonts\ARIALUNI.TTF",
+            r"C:\Windows\Fonts\arialuni.ttf",
+            r"C:\Windows\Fonts\ARIALUN.TTF",
+            "/System/Library/Fonts/Arial Unicode.ttf",
+            "/Library/Fonts/Arial Unicode.ttf",
+            "/usr/share/fonts/truetype/msttcorefonts/Arial Unicode.ttf",
+        ]
+        
+        for font_path in arial_unicode_paths:
+            if os.path.exists(font_path):
+                logger.info(f"Found Arial Unicode MS (full Korean support) at {font_path}")
+                return font_path, "ArialUnicode"
+        
+        # Second priority: Try to download Noto Sans CJK (guaranteed Korean support)
+        logger.info("Arial Unicode MS not found locally. Downloading Noto Sans CJK for full Korean support...")
+        font_path, font_label = self._try_download_noto_sans_cjk()
+        if font_path:
+            return font_path, font_label
+        
+        # Third priority: Other CJK-labeled fonts (may have limited Korean support)
+        other_cjk_fonts = [
+            (r"C:\Windows\Fonts\NotoSansCJK-Regular.ttf", "NotoSansCJK"),
+            (r"C:\Windows\Fonts\msyh.ttc", "MicrosoftYaHei"),  # May not have Korean
+            ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttf", "NotoSansCJK"),
+        ]
+        
+        for font_path, font_label in other_cjk_fonts:
+            if os.path.exists(font_path):
+                logger.warning(f"Using fallback font {font_label} (may have limited Korean support)")
+                return font_path, font_label
+        
+        # Final fallback: Any Unicode font
+        final_fallback_fonts = [
+            (r"C:\Windows\Fonts\DejaVuSans.ttf", "DejaVuSans"),
+            (r"C:\Windows\Fonts\Arial.ttf", "Arial"),
+            ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "DejaVuSans"),
+            ("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", "LiberationSans"),
+        ]
+        
+        for font_path, font_label in final_fallback_fonts:
+            if os.path.exists(font_path):
+                logger.warning(f"Using fallback font {font_label} (will NOT support Korean characters)")
+                return font_path, font_label
+        
+        return None, None
+    
+    def _try_download_noto_sans_cjk(self):
+        """
+        Attempt to download and cache Noto Sans CJK font.
+        Returns tuple of (font_path, font_label) or (None, None) if download fails.
+        """
+        try:
+            font_cache_dir = os.path.expanduser("~/.sap_report_fonts")
+            os.makedirs(font_cache_dir, exist_ok=True)
+            
+            font_path = os.path.join(font_cache_dir, "NotoSansCJK-Regular.ttf")
+            
+            # If already cached, use it
+            if os.path.exists(font_path):
+                logger.info(f"Using cached Noto Sans CJK font from {font_path}")
+                return font_path, "NotoSansCJK"
+            
+            # Try downloading from different sources
+            urls = [
+                "https://github.com/google/fonts/raw/main/ofl/notosanscjk/NotoSansCJK-Regular.ttc",
+                "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/Variable/NotoSansCJK-VF.ttf",
+            ]
+            
+            for url in urls:
+                try:
+                    logger.info(f"Attempting to download from: {url}")
+                    urllib.request.urlretrieve(url, font_path, reporthook=self._download_progress)
+                    logger.info(f"Successfully downloaded Noto Sans CJK to {font_path}")
+                    return font_path, "NotoSansCJK"
+                except Exception as e:
+                    logger.debug(f"Failed to download from {url}: {e}")
+                    if os.path.exists(font_path):
+                        os.remove(font_path)
+                    continue
+            
+            logger.warning("All download attempts failed")
+            return None, None
+                
+        except Exception as e:
+            logger.warning(f"Error attempting to download font: {e}")
+            return None, None
+    
+    def _download_progress(self, block_num, block_size, total_size):
+        """Simple progress indicator for file download"""
+        if total_size > 0:
+            percent = min(100, (block_num * block_size * 100) // total_size)
+            if percent % 10 == 0 and percent > 0:
+                logger.debug(f"Download progress: {percent}%")
 
     def format_bytes(self, size_bytes):
         if size_bytes == 0: return "0B"
@@ -65,32 +170,26 @@ class SAPReporter:
         pdf = FPDF(orientation='P', unit='mm', format='A4')
         pdf.set_margins(10, 15, 10)
         
-        # Font Configuration
+        # Font Configuration - Use new method
         font_name = "Helvetica"
-        font_paths = []
-        if platform.system() == "Darwin":
-            font_paths.append("/System/Library/Fonts/Supplemental/Arial Unicode.ttf")
-        elif platform.system() == "Windows":
-            font_paths.extend([
-                r"C:\Windows\Fonts\ARIALUNI.TTF",
-                r"C:\Windows\Fonts\arialuni.ttf",
-                r"C:\Windows\Fonts\ARIALUN.TTF"
-            ])
-        else:
-            font_paths.extend([
-                "/usr/share/fonts/truetype/msttcorefonts/Arial Unicode.ttf",
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-            ])
-
-        for font_path in font_paths:
-            if os.path.exists(font_path):
+        
+        font_path, font_label = self.get_unicode_font_path()
+        
+        if font_path and font_label:
+            try:
+                pdf.add_font(font_label, "", font_path, uni=True)
+                # Try to add bold variant if possible (may fail for some fonts)
                 try:
-                    pdf.add_font("ArialUnicode", "", font_path, uni=True)
-                    pdf.add_font("ArialUnicode", "B", font_path, uni=True)
-                    font_name = "ArialUnicode"
-                except Exception:
-                    font_name = "Helvetica"
-                break
+                    pdf.add_font(font_label, "B", font_path, uni=True)
+                except:
+                    logger.debug(f"Could not add bold variant for {font_label}")
+                font_name = font_label
+                logger.info(f"Successfully loaded Unicode font: {font_name}")
+            except Exception as e:
+                logger.warning(f"Failed to add font to PDF: {e}. Falling back to Helvetica.")
+                font_name = "Helvetica"
+        else:
+            logger.warning("No Unicode font available. PDF may have rendering issues with non-ASCII characters.")
 
         NAVY = (0, 48, 87)
         TEXT_COL = (33, 37, 41)
@@ -108,7 +207,12 @@ class SAPReporter:
         pdf.set_font(font_name, "B", 22)
         pdf.set_text_color(*NAVY)
         report_title = f"{stats.get('date', 'N/A')} 이마트 SAP DB 서버 모니터링 리포트"
-        pdf.cell(0, 20, report_title, ln=True, align='C')
+        # Handle potential encoding issues with Korean characters
+        try:
+            pdf.cell(0, 20, report_title, ln=True, align='C')
+        except Exception as e:
+            logger.warning(f"Failed to render title with font {font_name}: {e}. Using fallback title.")
+            pdf.cell(0, 20, f"{stats.get('date', 'N/A')} SAP DB Server Monitoring Report", ln=True, align='C')
         pdf.set_draw_color(*NAVY)
         pdf.line(10, 35, 200, 35)
         pdf.ln(10)
