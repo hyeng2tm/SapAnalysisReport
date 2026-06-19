@@ -6,6 +6,7 @@ from fpdf import FPDF
 import os
 import logging
 import re
+import platform
 from datetime import datetime
 from fpdf.fonts import FontFace
 
@@ -65,12 +66,32 @@ class SAPReporter:
         pdf.set_margins(10, 15, 10)
         
         # Font Configuration
-        font_path = "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"
-        font_name = "ArialUnicode"
-        if os.path.exists(font_path):
-            pdf.add_font("ArialUnicode", "", font_path)
-            pdf.add_font("ArialUnicode", "B", font_path)
-        
+        font_name = "Helvetica"
+        font_paths = []
+        if platform.system() == "Darwin":
+            font_paths.append("/System/Library/Fonts/Supplemental/Arial Unicode.ttf")
+        elif platform.system() == "Windows":
+            font_paths.extend([
+                r"C:\Windows\Fonts\ARIALUNI.TTF",
+                r"C:\Windows\Fonts\arialuni.ttf",
+                r"C:\Windows\Fonts\ARIALUN.TTF"
+            ])
+        else:
+            font_paths.extend([
+                "/usr/share/fonts/truetype/msttcorefonts/Arial Unicode.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+            ])
+
+        for font_path in font_paths:
+            if os.path.exists(font_path):
+                try:
+                    pdf.add_font("ArialUnicode", "", font_path, uni=True)
+                    pdf.add_font("ArialUnicode", "B", font_path, uni=True)
+                    font_name = "ArialUnicode"
+                except Exception:
+                    font_name = "Helvetica"
+                break
+
         NAVY = (0, 48, 87)
         TEXT_COL = (33, 37, 41)
         GRAY_LINE = (200, 200, 200)
