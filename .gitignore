@@ -22,3 +22,20 @@ scratch/
 test_*.py
 watcher.py
 test_*.pdf
+
+# Logs
+*.log
+full_log.txt
+
+# Debug / Check scripts
+_debug_lock.py
+debug_*.py
+check_*.py
+analyze_*.py
+qc.py
+show_peaks.py
+
+# Archive and output
+archive/
+output/
+report/
