@@ -1,0 +1,331 @@
+﻿C:/Users/221018/AppData/Local/Python/pythoncore-3.14-64/python.exe : 2026-06-22
+ 13:30:15,486 - INFO - Starting Professional SAP Load Analysis for directory: .
+/data
+위치 줄:1 문자:1
++ C:/Users/221018/AppData/Local/Python/pythoncore-3.14-64/python.exe ma ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (2026-06-22 13:3...rectory: ./data 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+2026-06-22 13:30:15,492 - INFO - Successfully loaded ./data\2026-03-07CPUEXPORT
+.csv with utf-8 using C engine
+2026-06-22 13:30:15,494 - INFO - Successfully loaded ./data\2026-03-07LockWaitE
+XPORT.csv with cp949 using C engine
+2026-06-22 13:30:15,538 - INFO - Successfully loaded ./data\2026-03-07SQLPLANCA
+HEEXPORT.csv with cp949 using C engine
+2026-06-22 13:30:16,305 - INFO - Successfully obtained Dev-X S2S token
+2026-06-22 13:30:16,306 - INFO - 
+===============================================================================
+=
+2026-06-22 13:30:16,307 - INFO - DEV-X AGENT ANALYSIS REQUEST
+2026-06-22 13:30:16,307 - INFO - ==============================================
+==================================
+2026-06-22 13:30:16,307 - INFO - [PROMPT (처음 5000자)]:
+
+너는 시니어 SAP Basis / DB 성능 분석가로서, 고객사(이마트)의 SAP DB 서버 모니터링 리포트를 작성 중이다.
+아래 제공되는 데이터들을 바탕으로 **전달된 7단계 구조**에 맞는 전문적인 한글 텍스트를 생성해라.
+단, 리포트가 **세로(Portrait) 모드**이므로 텍스트가 너무 길어지지 않게 간결하고 명확하게 작성해라.
+
+**[데이터 컨텍스트]**
+- 날짜: 2026-03-07
+- CPU: 평균 32.0%, 최대 80%, 최소 8% (p95: 50.0%)
+- 피크 샘플(80%↑): 1회
+- 메모리: 평균 57.9% (안정적 관리 여부 판단 필요)
+- 피크 구간: - 13:40~14:23 (Avg CPU: 52.9%, Max CPU: 62.0%)
+- 14:30~15:03 (Avg CPU: 57.2%, Max CPU: 80.0%)
+- 15:54~16:16 (Avg CPU: 55.8%, Max CPU: 77.0%)
+- 부하 주범 프로그램: SAPLZMM011
+- 락 경합 프로그램: SAPLSNR3
+- SQL 상세 지표: [정량 SQL 지표: 단위는 sec, memory는 bytes]
+PEAK_PERIOD PROGRAM_LABEL                                                      
+                                                                               
+                                                                               
+                              SQL_LABEL EXECUTION_COUNT TOTAL_EXEC_TIME_SEC AVG
+_EXEC_TIME_SEC MAX_EXEC_TIME_SEC TOTAL_EXECUTION_MEMORY_SIZE MAX_EXECUTION_MEMO
+RY_SIZE peak_share
+13:40~14:23    SAPLZMM011 SELECT /* FDA WRITE */ A . MATNR , A . WERKS , A . LG
+ORT , A . MEINS , A . WAERS ZWAERS , SUM( ( CASE WHEN A . LBBSA_SID = N? THEN A
+ . LBKUM END ) ) LABST , SUM( ( CASE WHEN A . LBBSA_SID = N? THEN A . LBKUM END
+ ) ) INSME , SUM( ( CASE WHEN A . LBBSA           14626           8796.4090    
+        0.6014           15.7820              10883077107263               1374
+3395024   0.122628
+13:40~14:23    SAPLZMM405 SELECT /* FDA READ */ N? GUBUN , A . MATNR , A . WERK
+S , A . MEINS , A . WAERS , B . SATNR , B . MATKL , MAKT . MAKTX SAKTX , D . MM
+STA , D . ZSTLIFNR LIFNR , D . ZFNCSTRCD , D . ZPURSTRCD ZPURTYCD , D . ZSTPURU
+OM , CASE WHEN D . ZRDCODYN = RTRIM( N?           18397           9916.0090    
+        0.5390            4.4770               8701102627496                245
+1895744   0.138236
+13:40~14:23    SAPLZSD013 SELECT /* FDA WRITE */ VBRK . FKDAT , VBRP . WERKS , 
+VBRP . MATNR , VBRP . VRKME , VBRP . MEINS , VBRK . WAERK , SUM( ( CASE VBRP . 
+SHKZG WHEN N? THEN ( ABS( VBRP . FKIMG ) * CAST( -? AS INTEGER ) ) ELSE ABS( VB
+RP . FKIMG ) END ) ) KWMENG , SUM( ( CA            4462           2508.7080    
+        0.5622            5.3180                412794667384                109
+1666648   0.034973
+14:30~15:03    SAPLZMM011 SELECT /* FDA WRITE */ A . MATNR , A . WERKS , A . LG
+ORT , A . MEINS , A . WAERS ZWAERS , SUM( ( CASE WHEN A . LBBSA_SID = N? THEN A
+ . LBKUM END ) ) LABST , SUM( ( CASE WHEN A . LBBSA_SID = N? THEN A . LBKUM END
+ ) ) INSME , SUM( ( CASE WHEN A . LBBSA           12165          12273.6750    
+        1.0089           32.3680              12857920995697               1203
+0960176   0.122831
+14:30~15:03    SAPLZMM405 SELECT /* FDA READ */ N? GUBUN , A . MATNR , A . WERK
+S , A . MEINS , A . WAERS , B . SATNR , B . MATKL , MAKT . MAKTX SAKTX , D . MM
+STA , D . ZSTLIFNR LIFNR , D . ZFNCSTRCD , D . ZPURSTRCD ZPURTYCD , D . ZSTPURU
+OM , CASE WHEN D . ZRDCODYN = RTRIM( N?           27499          16769.4960    
+        0.6098            6.2030              13378777657477                246
+3368656   0.167824
+14:30~15:03    SAPLZSD685                     SELECT /* FDA WRITE */ A . MATNR 
+, A . ZSEG_NO , A . ZFIX_NO , A . ZPOS_NO FROM ZAST00073 A INNER JOIN ? B (MATN
+R NVARCHAR, WERKS NVARCHAR) ON A . MATNR = B . MATNR AND A . WERKS = B . WERKS 
+WHERE A . MANDT = ? AND A . IF_DATE = ?            9374           9726.9420    
+        1.0377           17.3200               5025124423596                 57
+4908424   0.097344
+15:54~16:16    SAPLZMM405 SELECT /* FDA READ */ N? GUBUN , A . MATNR , A . WERK
+S , A . MEINS , A . WAERS , B . SATNR , B . MATKL , MAKT . MAKTX SAKTX , D . MM
+STA , D . ZSTLIFNR LIFNR , D . ZFNCSTRCD , D . ZPURSTRCD ZPURTYCD , D . ZSTPURU
+OM , CASE WHEN D . ZRDCODYN = RTRIM( N?           32975          18092.0250    
+        0.5487            6.7950              15915591148397                259
+0111248   0.265053
+15:54~16:16    SAPLZMM011 SELECT /* FDA WRITE */ A . MATNR , A . WERKS , A . LG
+ORT , A . MEINS , A . WAERS ZWAERS , SUM( ( CASE WHEN A . LBBSA_SID = N? THEN A
+ . LBKUM END ) ) LABST , SUM( ( CASE WHEN A . LBBSA_SID = N? THEN A . LBKUM END
+ ) ) INSME , SUM( ( CASE WHEN A . LBBSA            6447           2229.6470    
+        0.3458           29.5710               2675760407188               1181
+6356024   0.032665
+15:54~16:16    SAPLZSD685                     SELECT /* FDA WRITE */ A . MATNR 
+, A . ZSEG_NO , A . ZFIX_NO , A . ZPOS_NO FROM ZAST00073 A INNER JOIN ? B (MATN
+R NVARCHAR, WERKS NVARCHAR) ON A . MATNR = B . MATNR AND A . WERKS = B . WERKS 
+WHERE A . MANDT = ? AND A . IF_DATE = ?           10872          10503.0810    
+        0.9661            7.5930               5825275123844                 57
+5075384   0.153873
+
+[합계] TOTAL_EXEC_TIME_SEC=90815.9920
+[합계] EXECUTION_COUNT=136817
+- Lock Wait 상세 지표: [정량 Lock Wait 지표: 단위는 sec, ratio는 0~1]
+PEAK_PERIOD PROGRAM_LABEL                                                      
+                                                                               
+             ...
+
+2026-06-22 13:30:16,307 - INFO - 
+[DEV-X REQUEST DETAILS]
+2026-06-22 13:30:16,307 - INFO -   URL: https://devx-gw.shinsegae-inc.com/api/v
+1/agent/chat
+2026-06-22 13:30:16,307 - INFO -   Agent ID: c18ac421-4edd-41fc-b123-09d0632ab2
+3b
+2026-06-22 13:30:16,307 - INFO -   User: sap-analyzer
+2026-06-22 13:30:16,307 - INFO -   Query Length: 6469 chars
+2026-06-22 13:31:07,000 - INFO - Agent Response Status: 200
+2026-06-22 13:31:07,000 - INFO - Agent Response Headers: {'Server': 'nginx/1.28
+.2', 'Date': 'Mon, 22 Jun 2026 04:31:07 GMT', 'Content-Type': 'application/json
+', 'Content-Length': '35169', 'Connection': 'keep-alive', 'x-request-id': '8c76
+2c49-a7e4-4f90-8b0e-fb98b4d25856', 'Access-Control-Allow-Origin': '*', 'Access-
+Control-Allow-Credentials': 'true'}
+2026-06-22 13:31:07,000 - INFO - 
+[DEV-X RESPONSE STATUS]
+2026-06-22 13:31:07,000 - INFO -   Status Code: 200
+2026-06-22 13:31:07,000 - INFO -   Content-Length: 20104 chars
+2026-06-22 13:31:07,001 - INFO - 
+[DEV-X RESPONSE JSON STRUCTURE]
+2026-06-22 13:31:07,001 - INFO -   Keys: ['message', 'client_id', 'conversation
+_id', 'answer', 'external_response']
+2026-06-22 13:31:07,002 - INFO -   Extracted from 'answer' field
+2026-06-22 13:31:07,002 - INFO - 
+[EXTRACTED MESSAGE]
+2026-06-22 13:31:07,002 - INFO -   Length: 6296 chars
+2026-06-22 13:31:07,002 - INFO -   Content (first 500 chars):
+다음은 **이마트 SAP HANA DB 서버 모니터링 리포트(2026-03-07, 09:00~18:00 KST 기준)** 초안임.
+
+---
+
+## 1. Summary (요약)
+
+이마트 SAP HANA DB의 업무시간대 CPU 사용률은 **평균 32.0%, p95 50.0%, 최대 80.0%, 최소 8.0%** 수준으로
+, 전반적으로는 안정적이나 **단발성 고부하(80% 이상) 1회**가 확인되었음.  
+메모리 사용률은 **평균 57.9%**로, Allocation Limit 대비 과도한 압박 징후는 없으며 **전반적으로 안정적으로 관리되는 수
+준**으로 판단됨.
+
+운영상 주의가 필요한 시간대는 아래 3개 구간임.
+
+- **13:40~14:23**: 평균 CPU 52.9%
+- **14:30~15:03**: 평균 CPU 57.2%, 최대 CPU 80.0%로 당일 최고 부하
+- **15:54~16:16**: 평균 CPU 55.8%, Lock 경합 동반
+
+종합하면, 본 일자의 부하는 **메모리
+2026-06-22 13:31:07,004 - INFO - 
+===============================================================================
+=
+2026-06-22 13:31:07,004 - INFO - DEV-X AGENT RESPONSE
+2026-06-22 13:31:07,004 - INFO - ==============================================
+==================================
+2026-06-22 13:31:07,004 - INFO - [RESULT (처음 1000자)]:
+다음은 **이마트 SAP HANA DB 서버 모니터링 리포트(2026-03-07, 09:00~18:00 KST 기준)** 초안임.
+
+---
+
+## 1. Summary (요약)
+
+이마트 SAP HANA DB의 업무시간대 CPU 사용률은 **평균 32.0%, p95 50.0%, 최대 80.0%, 최소 8.0%** 수준으로
+, 전반적으로는 안정적이나 **단발성 고부하(80% 이상) 1회**가 확인되었음.  
+메모리 사용률은 **평균 57.9%**로, Allocation Limit 대비 과도한 압박 징후는 없으며 **전반적으로 안정적으로 관리되는 수
+준**으로 판단됨.
+
+운영상 주의가 필요한 시간대는 아래 3개 구간임.
+
+- **13:40~14:23**: 평균 CPU 52.9%
+- **14:30~15:03**: 평균 CPU 57.2%, 최대 CPU 80.0%로 당일 최고 부하
+- **15:54~16:16**: 평균 CPU 55.8%, Lock 경합 동반
+
+종합하면, 본 일자의 부하는 **메모리 부족형보다는 CPU 집중형**에 가깝고, 특정 프로그램/SQL이 반복적으로 실행되며 업무시간대 중반 이
+후 부하를 유발한 패턴으로 해석됨.
+
+---
+
+## 2. CPU / 메모리 요약 테이블
+
+| CPU최소 | CPU평균 | CPU최대 | CPU95 | 고부하횟수(≥80%) | 메모리평균(% of Limit) | 표본수 | 비고 |
+|---|---:|---:|---:|---:|---:|---:|---|
+| 8.0% | 32.0% | 80.0% | 50.0% | 1회 | 57.9% | N/A | CPU95는 95th percentile 기준 |
+
+> 메모리는 평균 57.9%로 안정적이며, 당일 병목의 주원인은 메모리보다는 CPU 및 일부 Lock 경합으로 판단됨.
+
+---
+
+## 3. CPU + 메모리 통합 차트 해석
+
+**차트 해석 요약**
+
+CPU와 메모리를 하나의 추세로 비교할 경우, **CPU 상승 구간이 13:40~16:16 사이에 집중적으로 나타나는 반면 메모리는 상대적으로
+...
+
+2026-06-22 13:31:07,004 - INFO - 
+===============================================================================
+=
+2026-06-22 13:31:07,004 - INFO - [AI INSIGHTS LENGTH] 6296 chars
+2026-06-22 13:31:07,005 - INFO - [AI INSIGHTS PREVIEW (first 1000 chars)]:
+2026-06-22 13:31:07,005 - INFO - 다음은 **이마트 SAP HANA DB 서버 모니터링 리포트(2026-03-07, 
+09:00~18:00 KST 기준)** 초안임.
+
+---
+
+## 1. Summary (요약)
+
+이마트 SAP HANA DB의 업무시간대 CPU 사용률은 **평균 32.0%, p95 50.0%, 최대 80.0%, 최소 8.0%** 수준으로
+, 전반적으로는 안정적이나 **단발성 고부하(80% 이상) 1회**가 확인되었음.  
+메모리 사용률은 **평균 57.9%**로, Allocation Limit 대비 과도한 압박 징후는 없으며 **전반적으로 안정적으로 관리되는 수
+준**으로 판단됨.
+
+운영상 주의가 필요한 시간대는 아래 3개 구간임.
+
+- **13:40~14:23**: 평균 CPU 52.9%
+- **14:30~15:03**: 평균 CPU 57.2%, 최대 CPU 80.0%로 당일 최고 부하
+- **15:54~16:16**: 평균 CPU 55.8%, Lock 경합 동반
+
+종합하면, 본 일자의 부하는 **메모리 부족형보다는 CPU 집중형**에 가깝고, 특정 프로그램/SQL이 반복적으로 실행되며 업무시간대 중반 이
+후 부하를 유발한 패턴으로 해석됨.
+
+---
+
+## 2. CPU / 메모리 요약 테이블
+
+| CPU최소 | CPU평균 | CPU최대 | CPU95 | 고부하횟수(≥80%) | 메모리평균(% of Limit) | 표본수 | 비고 |
+|---|---:|---:|---:|---:|---:|---:|---|
+| 8.0% | 32.0% | 80.0% | 50.0% | 1회 | 57.9% | N/A | CPU95는 95th percentile 기준 |
+
+> 메모리는 평균 57.9%로 안정적이며, 당일 병목의 주원인은 메모리보다는 CPU 및 일부 Lock 경합으로 판단됨.
+
+---
+
+## 3. CPU + 메모리 통합 차트 해석
+
+**차트 해석 요약**
+
+CPU와 메모리를 하나의 추세로 비교할 경우, **CPU 상승 구간이 13:40~16:16 사이에 집중적으로 나타나는 반면 메모리는 상대적으로
+2026-06-22 13:31:07,005 - INFO - ==============================================
+==================================
+
+2026-06-22 13:31:07,183 - INFO - 
+===============================================================================
+=
+2026-06-22 13:31:07,183 - INFO - [ANALYSIS DATA PREPARED FOR PDF]
+2026-06-22 13:31:07,183 - INFO -   chart_path: ./output\sap_unified_trend_13310
+7.png
+2026-06-22 13:31:07,183 - INFO -   ai_insights type: <class 'str'>
+2026-06-22 13:31:07,183 - INFO -   ai_insights length: 6296
+2026-06-22 13:31:07,183 - INFO -   ai_insights (first 500 chars): 다음은 **이마트 SAP
+ HANA DB 서버 모니터링 리포트(2026-03-07, 09:00~18:00 KST 기준)** 초안임.
+
+---
+
+## 1. Summary (요약)
+
+이마트 SAP HANA DB의 업무시간대 CPU 사용률은 **평균 32.0%, p95 50.0%, 최대 80.0%, 최소 8.0%** 수준으로
+, 전반적으로는 안정적이나 **단발성 고부하(80% 이상) 1회**가 확인되었음.  
+메모리 사용률은 **평균 57.9%**로, Allocation Limit 대비 과도한 압박 징후는 없으며 **전반적으로 안정적으로 관리되는 수
+준**으로 판단됨.
+
+운영상 주의가 필요한 시간대는 아래 3개 구간임.
+
+- **13:40~14:23**: 평균 CPU 52.9%
+- **14:30~15:03**: 평균 CPU 57.2%, 최대 CPU 80.0%로 당일 최고 부하
+- **15:54~16:16**: 평균 CPU 55.8%, Lock 경합 동반
+
+종합하면, 본 일자의 부하는 **메모리
+2026-06-22 13:31:07,183 - INFO - ==============================================
+==================================
+
+2026-06-22 13:31:07,183 - INFO - Using Pretendard font at report\fonts\Pretenda
+rd-Regular.ttf
+2026-06-22 13:31:07,270 - INFO - Successfully loaded Unicode font: Pretendard
+2026-06-22 13:31:07,271 - INFO - 
+===============================================================================
+=
+2026-06-22 13:31:07,271 - INFO - [PDF REPORT: AI INSIGHTS PROCESSING]
+2026-06-22 13:31:07,271 - INFO -   insights type: <class 'str'>
+2026-06-22 13:31:07,271 - INFO -   insights length: 6296
+2026-06-22 13:31:07,271 - INFO -   insights (first 500 chars): 다음은 **이마트 SAP HA
+NA DB 서버 모니터링 리포트(2026-03-07, 09:00~18:00 KST 기준)** 초안임.
+
+---
+
+## 1. Summary (요약)
+
+이마트 SAP HANA DB의 업무시간대 CPU 사용률은 **평균 32.0%, p95 50.0%, 최대 80.0%, 최소 8.0%** 수준으로
+, 전반적으로는 안정적이나 **단발성 고부하(80% 이상) 1회**가 확인되었음.  
+메모리 사용률은 **평균 57.9%**로, Allocation Limit 대비 과도한 압박 징후는 없으며 **전반적으로 안정적으로 관리되는 수
+준**으로 판단됨.
+
+운영상 주의가 필요한 시간대는 아래 3개 구간임.
+
+- **13:40~14:23**: 평균 CPU 52.9%
+- **14:30~15:03**: 평균 CPU 57.2%, 최대 CPU 80.0%로 당일 최고 부하
+- **15:54~16:16**: 평균 CPU 55.8%, Lock 경합 동반
+
+종합하면, 본 일자의 부하는 **메모리
+2026-06-22 13:31:07,271 - INFO - ==============================================
+==================================
+
+2026-06-22 13:31:07,271 - INFO - [SUMMARY EXTRACTION]
+2026-06-22 13:31:07,271 - INFO -   match found: True
+2026-06-22 13:31:07,271 - INFO -   extracted (first 300 chars): 이마트 SAP HANA DB
+의 업무시간대 CPU 사용률은 **평균 32.0%, p95 50.0%, 최대 80.0%, 최소 8.0%** 수준으로, 전반적으로는 안정적이나 
+**단발성 고부하(80% 이상) 1회**가 확인되었음.  
+메모리 사용률은 **평균 57.9%**로, Allocation Limit 대비 과도한 압박 징후는 없으며 **전반적으로 안정적으로 관리되는 수
+준**으로 판단됨.
+
+운영상 주의가 필요한 시간대는 아래 3개 구간임.
+
+- **13:40~14:23**: 평균 CPU 52.9%
+- **14:30~15:03**: 평균
+2026-06-22 13:31:07,271 - INFO -   final text (first 300 chars): 이마트 SAP HANA D
+B의 업무시간대 CPU 사용률은 **평균 32.0%, p95 50.0%, 최대 80.0%, 최소 8.0%** 수준으로, 전반적으로는 안정적이나
+ **단발성 고부하(80% 이상) 1회**가 확인되었음.  
+메모리 사용률은 **평균 57.9%**로, Allocation Limit 대비 과도한 압박 징후는 없으며 **전반적으로 안정적으로 관리되는 수
+준**으로 판단됨.
+
+운영상 주의가 필요한 시간대는 아래 3개 구간임.
+
+- **13:40~14:23**: 평균 CPU 52.9%
+- **14:30~15:03**: 평균
+
+2026-06-22 13:31:07,482 - INFO - Technical Deep Dive Report complete: ./output\
+SAP_Analysis_Report_2026-03-07_133107.pdf

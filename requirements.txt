@@ -2,6 +2,6 @@ pandas
 openpyxl
 fpdf2
 matplotlib
-google-generativeai
+requests
 python-dotenv
 pyyaml

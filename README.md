@@ -47,8 +47,8 @@ Create a `.env` file in the root directory:
 GOOGLE_API_KEY=your_gemini_api_key
 SMTP_SERVER=smtp.gmail.com
 SMTP_PORT=587
-SMTP_USER=your_email@gmail.com
-SMTP_PASS=your_app_password
+SENDER_EMAIL=your_email@gmail.com
+EMAIL_PASSWORD=your_app_password
 ```
 
 ### 4. Running the Analysis

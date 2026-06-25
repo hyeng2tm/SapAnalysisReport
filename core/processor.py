@@ -3,6 +3,7 @@ import os
 import re
 import logging
 import numpy as np
+import shutil
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -11,15 +12,96 @@ class SAPDataProcessor:
     def __init__(self, data_dir):
         self.data_dir = data_dir
         self.dfs = {}
+        self.loaded_file_paths = []
+        self.lock_ratio_threshold = self._get_env_float("LOCK_WAIT_RATIO_THRESHOLD", 0.3)
+        self.lock_top_quantile = self._get_env_float("LOCK_WAIT_TOP_QUANTILE", 0.9)
+        self.lock_top_per_peak = max(1, int(self._get_env_float("LOCK_WAIT_TOP_PER_PEAK", 3)))
+        self.peak_weight_max = self._get_env_float("PEAK_WEIGHT_MAX", 0.45)
+        self.peak_weight_avg = self._get_env_float("PEAK_WEIGHT_AVG", 0.35)
+        self.peak_weight_duration = self._get_env_float("PEAK_WEIGHT_DURATION", 0.20)
+        self.peak_reliability_samples = max(1, int(self._get_env_float("PEAK_RELIABILITY_SAMPLES", 5)))
+        self.peak_window_limit = self._get_env_int("PEAK_WINDOW_LIMIT", 0)
+        self.peak_min_samples = max(1, self._get_env_int("PEAK_MIN_SAMPLES", 5))
+        self.peak_min_duration_minutes = max(0, int(self._get_env_int("PEAK_MIN_DURATION_MINUTES", 10)))
+        # Heavy memory threshold (bytes): default 1GB, configurable via PEAK_HEAVY_MEM_GB_THRESHOLD
+        heavy_mem_gb = max(0.1, float(self._get_env_float("PEAK_HEAVY_MEM_GB_THRESHOLD", 1.0)))
+        self.peak_heavy_mem_threshold = int(heavy_mem_gb * 1024 * 1024 * 1024)
+        # Slow SQL average execution time threshold (seconds): default 10s, configurable via PEAK_SLOW_AVG_SEC_THRESHOLD
+        self.peak_slow_avg_sec_threshold = max(0.1, float(self._get_env_float("PEAK_SLOW_AVG_SEC_THRESHOLD", 10.0)))
+
+    def _get_env_float(self, key, default):
+        raw = os.getenv(key)
+        if raw is None:
+            return default
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return default
+
+    def _get_env_int(self, key, default):
+        raw = os.getenv(key)
+        if raw is None:
+            return default
+        try:
+            return int(float(raw))
+        except (TypeError, ValueError):
+            return default
 
     def load_data(self):
         """Discovers and loads SAP CSV/XLSX exports with auto-detection."""
         files = os.listdir(self.data_dir)
         for f in files:
             path = os.path.join(self.data_dir, f)
-            if 'CPU' in f: self.dfs["CPU"] = self._read_any(path)
-            elif 'SQLPLAN' in f: self.dfs["SQL"] = self._read_any(path)
-            elif 'LockWait' in f: self.dfs["LockWait"] = self._read_any(path)
+            if not os.path.isfile(path):
+                continue
+
+            source_key = None
+            if 'CPU' in f:
+                source_key = "CPU"
+            elif 'SQLPLAN' in f:
+                source_key = "SQL"
+            elif 'LockWait' in f:
+                source_key = "LockWait"
+
+            if source_key is None:
+                continue
+
+            loaded_df = self._read_any(path)
+            self.dfs[source_key] = loaded_df
+            if loaded_df is not None and not loaded_df.empty:
+                self.loaded_file_paths.append(path)
+
+    def archive_loaded_files(self, analysis_date=None, archive_root=None):
+        """Moves analyzed source files into archive/<analysis_date>/ and returns moved paths."""
+        if not self.loaded_file_paths:
+            return []
+
+        base_archive_root = archive_root
+        if not base_archive_root:
+            data_dir_abs = os.path.abspath(self.data_dir)
+            base_archive_root = os.path.join(os.path.dirname(data_dir_abs), "archive")
+
+        date_folder = analysis_date or datetime.now().strftime("%Y-%m-%d")
+        target_dir = os.path.join(base_archive_root, date_folder)
+        os.makedirs(target_dir, exist_ok=True)
+
+        moved_paths = []
+        for src_path in dict.fromkeys(self.loaded_file_paths):
+            if not os.path.exists(src_path):
+                continue
+
+            dest_path = os.path.join(target_dir, os.path.basename(src_path))
+            if os.path.abspath(src_path) == os.path.abspath(dest_path):
+                continue
+
+            if os.path.exists(dest_path):
+                os.remove(dest_path)
+
+            shutil.move(src_path, dest_path)
+            moved_paths.append(dest_path)
+
+        self.loaded_file_paths = []
+        return moved_paths
 
     def _read_any(self, path):
         try:
@@ -62,6 +144,13 @@ class SAPDataProcessor:
             
         if 'TIME' in df.columns:
             df['TIMESTAMP'] = pd.to_datetime(df['TIME'].astype(str).str[:14], format='%Y%m%d%H%M%S', errors='coerce')
+        elif 'TIMESTAMP' in df.columns:
+            df['TIMESTAMP'] = pd.to_datetime(df['TIMESTAMP'], errors='coerce')
+        elif 'LAST_EXEC_TS' in df.columns:
+            df['TIMESTAMP'] = pd.to_datetime(df['LAST_EXEC_TS'].astype(str).str[:14], format='%Y%m%d%H%M%S', errors='coerce')
+        else:
+            # Keep a stable schema for downstream consumers even when source time columns are absent.
+            df['TIMESTAMP'] = pd.NaT
         
         if 'MEMORY_USED' in df.columns and 'MEMORY_ALLOCATION_LIMIT' in df.columns:
             used = df['MEMORY_USED'].apply(self._to_num).fillna(0)
@@ -71,15 +160,20 @@ class SAPDataProcessor:
             df['MEMORY_PCT'] = df['MEM_USED_PCT'].apply(self._to_num).fillna(0)
 
         # Apply Guideline: Filter 09:00 ~ 18:00 (KST)
-        if 'TIMESTAMP' in df.columns:
-            df = df.dropna(subset=['TIMESTAMP', 'CPU'])
-            df = df[(df['TIMESTAMP'].dt.hour >= 9) & (df['TIMESTAMP'].dt.hour < 18)]
+        #if 'TIMESTAMP' in df.columns:
+        #    df = df.dropna(subset=['TIMESTAMP', 'CPU'])
+        #    df = df[(df['TIMESTAMP'].dt.hour >= 9) & (df['TIMESTAMP'].dt.hour < 18)]
 
         return df
 
     def identify_peak_windows(self, cpu_df):
         """Hybrid Peak Windows: Using CPU P95 OR Lock Surge (>60s) to match other AI windows."""
-        if cpu_df.empty: return []
+        if cpu_df.empty or 'CPU' not in cpu_df.columns or 'TIMESTAMP' not in cpu_df.columns:
+            return []
+
+        cpu_df = cpu_df.dropna(subset=['TIMESTAMP', 'CPU'])
+        if cpu_df.empty:
+            return []
         
         # 1. Strict CPU Signal (P95 Threshold based on RAW data exactly as requested)
         from datetime import timedelta
@@ -119,6 +213,7 @@ class SAPDataProcessor:
             end_ts = w['end'] + pd.Timedelta(seconds=59)
             avg_cpu = np.mean(w['cpus'])
             max_cpu = max(w['cpus'])
+            min_cpu = min(w['cpus'])
             
             reasons = [f"CPU({max_cpu:.1f}%)"]
                 
@@ -129,6 +224,7 @@ class SAPDataProcessor:
                 'start': w['start'],
                 'end': end_ts,
                 'max_cpu': max_cpu,
+                'min_cpu': min_cpu,
                 'avg_cpu': avg_cpu,
                 'total_lock': 0, # Kept for API compatibility if needed elsewhere
                 'impact': impact,
@@ -136,9 +232,55 @@ class SAPDataProcessor:
                 'sample_count': sample_count
             })
 
-        # Select the TOP 3 most impactful peak windows
-        top_windows = sorted(final_windows, key=lambda x: x['impact'], reverse=True)[:3]
-        return sorted(top_windows, key=lambda x: x['start'])
+        # Select by mixed score to balance sustained load and short spikes.
+        # Score = weighted(max, avg, duration) with a reliability adjustment for very short windows.
+        if not final_windows:
+            return []
+
+        weight_sum = self.peak_weight_max + self.peak_weight_avg + self.peak_weight_duration
+        if weight_sum <= 0:
+            w_max, w_avg, w_dur = 0.45, 0.35, 0.20
+        else:
+            w_max = self.peak_weight_max / weight_sum
+            w_avg = self.peak_weight_avg / weight_sum
+            w_dur = self.peak_weight_duration / weight_sum
+
+        max_values = np.array([w['max_cpu'] for w in final_windows], dtype=float)
+        avg_values = np.array([w['avg_cpu'] for w in final_windows], dtype=float)
+        dur_values = np.array([w['sample_count'] for w in final_windows], dtype=float)
+
+        def minmax(values):
+            v_min = np.min(values)
+            v_max = np.max(values)
+            if v_max - v_min < 1e-9:
+                return np.zeros(len(values), dtype=float)
+            return (values - v_min) / (v_max - v_min)
+
+        norm_max = minmax(max_values)
+        norm_avg = minmax(avg_values)
+        norm_dur = minmax(dur_values)
+
+        for idx, w in enumerate(final_windows):
+            raw_score = (w_max * norm_max[idx]) + (w_avg * norm_avg[idx]) + (w_dur * norm_dur[idx])
+            reliability = min(1.0, w['sample_count'] / float(self.peak_reliability_samples))
+            w['peak_score'] = raw_score * (0.6 + 0.4 * reliability)
+
+        ranked_windows = sorted(final_windows, key=lambda x: x['peak_score'], reverse=True)
+
+        # Filter: keep only sustained peak windows (sample_count >= threshold)
+        # to exclude single/double-point transient spikes, and minimum duration threshold.
+        filtered_windows = []
+        for w in ranked_windows:
+            if w['sample_count'] >= self.peak_min_samples:
+                duration_minutes = (w['end'] - w['start']).total_seconds() / 60.0
+                if duration_minutes >= self.peak_min_duration_minutes:
+                    filtered_windows.append(w)
+        if not filtered_windows:
+            filtered_windows = ranked_windows[:1] if ranked_windows else []
+
+        if self.peak_window_limit > 0:
+            filtered_windows = filtered_windows[:self.peak_window_limit]
+        return sorted(filtered_windows, key=lambda x: x['start'])
 
     def normalize_sql(self, sql):
         sql = str(sql).strip().upper()
@@ -191,73 +333,106 @@ class SAPDataProcessor:
 
         # 1. SQL Execution Analysis (Global Top 5 across all peaks)
         top_sql = pd.DataFrame()
+        sql_df = pd.DataFrame()
         if "SQL" in self.dfs:
             df = self.dfs["SQL"].copy()
             df.columns = [c.upper() for c in df.columns]
-            
-            # Preprocessing: Sort, Unique, and Calculate GLOBAL Deltas for cumulative data
-            df = df.sort_values(['SQL_TEXT', 'LAST_EXEC_TS'])
-            df = df.drop_duplicates(subset=['SQL_TEXT', 'LAST_EXEC_TS'])
-            
-            # Data is ALREADY delta-based per snapshot (Confirmed via raw grep analysis)
-            # Just ensure they are numeric and map to target delta names
-            num_cols = {
-                'TOTAL_EXEC_TIME_SEC': 'TIME_DELTA',
-                'TOTAL_EXECUTION_MEMORY_SIZE': 'MEM_DELTA',
-                'EXEC_COUNT': 'COUNT_DELTA'
-            }
-            for src, target in num_cols.items():
-                if src in df.columns:
-                    df[target] = df[src].apply(self._to_num).fillna(0)
-            
-            # Ensure other metrics are numeric too
-            for c in ['MAX_EXECUTION_MEMORY_SIZE', 'MAX_EXEC_TIME_SEC']:
-                if c in df.columns:
-                    df[c] = df[c].apply(self._to_num).fillna(0)
-            
-            # Standardize Column Names
-            df.columns = [c.upper() for c in df.columns]
-            col_map = {
-                'EXEC_COUNT': 'TOTAL_EXEC_COUNT',
-                'TOTAL_EXECUTION_MEMORY_SIZE': 'TOTAL_EXECUTION_MEMORY',
-                'MAX_EXECUTION_MEMORY_SIZE': 'MAX_EXECUTION_MEMORY'
-            }
-            for k, v in col_map.items():
-                if k in df.columns and v not in df.columns:
-                    df[v] = df[k]
-            
-            df['TIMESTAMP'] = pd.to_datetime(df['LAST_EXEC_TS'].astype(str).str[:14], format='%Y%m%d%H%M%S', errors='coerce')
-            for c in ['TOTAL_EXEC_TIME_SEC', 'TOTAL_EXEC_COUNT', 'TOTAL_EXECUTION_MEMORY', 'MAX_EXECUTION_MEMORY', 'MAX_EXEC_TIME_SEC', 'MAX_EXECUTION_MEMORY_SIZE']:
-                if c in df.columns: df[c] = df[c].apply(self._to_num).fillna(0)
 
-            # Prepare Delta data
-            sql_df = df
+            if 'SQL_TEXT' not in df.columns or 'LAST_EXEC_TS' not in df.columns:
+                df = pd.DataFrame()
+            else:
+                # Ensure required metric columns exist to avoid KeyError during groupby/aggregation.
+                for required in ['TOTAL_EXEC_TIME_SEC', 'TOTAL_EXECUTION_MEMORY_SIZE', 'EXEC_COUNT', 'MAX_EXECUTION_MEMORY_SIZE', 'MAX_EXEC_TIME_SEC']:
+                    if required not in df.columns:
+                        df[required] = 0
+
+            if not df.empty:
+                # Preprocessing: Sort, Unique, and Calculate GLOBAL Deltas for cumulative data
+                df = df.sort_values(['SQL_TEXT', 'LAST_EXEC_TS'])
+                df = df.drop_duplicates(subset=['SQL_TEXT', 'LAST_EXEC_TS'])
+
+                # Data is ALREADY delta-based per snapshot (Confirmed via raw grep analysis)
+                # Just ensure they are numeric and map to target delta names
+                num_cols = {
+                    'TOTAL_EXEC_TIME_SEC': 'TIME_DELTA',
+                    'TOTAL_EXECUTION_MEMORY_SIZE': 'MEM_DELTA',
+                    'EXEC_COUNT': 'COUNT_DELTA'
+                }
+                for src, target in num_cols.items():
+                    if src in df.columns:
+                        df[target] = df[src].apply(self._to_num).fillna(0)
+
+                # Ensure other metrics are numeric too
+                for c in ['MAX_EXECUTION_MEMORY_SIZE', 'MAX_EXEC_TIME_SEC']:
+                    if c in df.columns:
+                        df[c] = df[c].apply(self._to_num).fillna(0)
+
+                # Standardize Column Names
+                df.columns = [c.upper() for c in df.columns]
+                col_map = {
+                    'EXEC_COUNT': 'TOTAL_EXEC_COUNT',
+                    'TOTAL_EXECUTION_MEMORY_SIZE': 'TOTAL_EXECUTION_MEMORY',
+                    'MAX_EXECUTION_MEMORY_SIZE': 'MAX_EXECUTION_MEMORY'
+                }
+                for k, v in col_map.items():
+                    if k in df.columns and v not in df.columns:
+                        df[v] = df[k]
+
+                df['TIMESTAMP'] = pd.to_datetime(df['LAST_EXEC_TS'].astype(str).str[:14], format='%Y%m%d%H%M%S', errors='coerce')
+                for c in ['TOTAL_EXEC_TIME_SEC', 'TOTAL_EXEC_COUNT', 'TOTAL_EXECUTION_MEMORY', 'MAX_EXECUTION_MEMORY', 'MAX_EXEC_TIME_SEC', 'MAX_EXECUTION_MEMORY_SIZE']:
+                    if c in df.columns:
+                        df[c] = df[c].apply(self._to_num).fillna(0)
+
+                # Prepare Delta data
+                sql_df = df
             
         lock_df = pd.DataFrame()
         if "LockWait" in self.dfs:
             lock_df = self.dfs["LockWait"].copy()
             lock_df.columns = [c.upper() for c in lock_df.columns]
-            lock_df['TIMESTAMP'] = pd.to_datetime(lock_df['LAST_EXEC_TS'].astype(str).str[:14], format='%Y%m%d%H%M%S', errors='coerce')
-            for c in ['TOTAL_LOCK_WAIT_SEC', 'EXEC_COUNT', 'TOTAL_EXEC_MEM_MB', 'TOTAL_EXEC_TIME_SEC']:
-                if c in lock_df.columns: lock_df[c] = lock_df[c].apply(self._to_num).fillna(0)
-            lock_df['LOCK_DELTA'] = lock_df['TOTAL_LOCK_WAIT_SEC']
+            if 'LAST_EXEC_TS' in lock_df.columns:
+                lock_df['TIMESTAMP'] = pd.to_datetime(lock_df['LAST_EXEC_TS'].astype(str).str[:14], format='%Y%m%d%H%M%S', errors='coerce')
+                for c in ['TOTAL_LOCK_WAIT_SEC', 'EXEC_COUNT', 'TOTAL_EXEC_MEM_MB', 'TOTAL_EXEC_TIME_SEC']:
+                    if c in lock_df.columns:
+                        lock_df[c] = lock_df[c].apply(self._to_num).fillna(0)
+                if 'TOTAL_LOCK_WAIT_SEC' in lock_df.columns:
+                    lock_df['LOCK_DELTA'] = lock_df['TOTAL_LOCK_WAIT_SEC']
+                else:
+                    lock_df['LOCK_DELTA'] = 0
+            else:
+                lock_df = pd.DataFrame()
 
         # 2. Peak-based Unified Analysis
         unified_candidates = []
         for w in windows:
-            # Buffer: 10 mins (Reduced from 30m to avoid noise) to ensure we catch relevant snapshots
             w_start = w['start']
             w_end_ext = w['end']
             p_label = f"{w['start'].strftime('%H:%M')}~{w['end'].strftime('%H:%M')}"
             
             # SQL candidates in this window
             w_sql = sql_df[(sql_df['TIMESTAMP'] >= w_start) & (sql_df['TIMESTAMP'] <= w_end_ext)].copy() if not sql_df.empty else pd.DataFrame()
+            
+            # Fallback: if no data in exact window, expand buffer to ±30 minutes to catch snapshot data
+            if w_sql.empty and not sql_df.empty:
+                from datetime import timedelta
+                w_start_ext = w_start - timedelta(minutes=30)
+                w_end_ext_wide = w_end_ext + timedelta(minutes=30)
+                w_sql = sql_df[(sql_df['TIMESTAMP'] >= w_start_ext) & (sql_df['TIMESTAMP'] <= w_end_ext_wide)].copy()
+            
             if not w_sql.empty:
                 w_sql['PROGRAM_LABEL'] = w_sql.apply(get_label, axis=1)
                 w_sql['SQL_LABEL'] = w_sql['SQL_TEXT'].apply(self.normalize_sql)
             
             # Lock candidates in this window 
             w_lock = lock_df[(lock_df['TIMESTAMP'] >= w_start) & (lock_df['TIMESTAMP'] <= w_end_ext)].copy() if not lock_df.empty else pd.DataFrame()
+            
+            # Fallback: if no data in exact window, expand buffer to ±30 minutes
+            if w_lock.empty and not lock_df.empty:
+                from datetime import timedelta
+                w_start_ext = w_start - timedelta(minutes=30)
+                w_end_ext_wide = w_end_ext + timedelta(minutes=30)
+                w_lock = lock_df[(lock_df['TIMESTAMP'] >= w_start_ext) & (lock_df['TIMESTAMP'] <= w_end_ext_wide)].copy()
+            
             if not w_lock.empty:
                 w_lock['PROGRAM_LABEL'] = w_lock.apply(get_label, axis=1)
                 w_lock['SQL_LABEL'] = w_lock['SQL_TEXT'].apply(self.normalize_sql)
@@ -329,12 +504,14 @@ class SAPDataProcessor:
                     # Quantile 0.9 of total execution time within THIS window's active set
                     time_q90 = active_sql_df['EXEC_TIME_win'].quantile(0.9)
                     is_top_10_time = (merged['EXEC_TIME_win'] >= time_q90) & is_active_sql
-                    is_slow_avg = (merged['AVG_EXEC_TIME_win'] >= 1.0) & is_active_sql
-                    is_heavy_mem = (merged['MAX_MEM_win'] >= 1024 * 1024 * 1024) & is_active_sql
+                    is_slow_avg = (merged['AVG_EXEC_TIME_win'] >= self.peak_slow_avg_sec_threshold) & is_active_sql
+                    is_heavy_mem = (merged['MAX_MEM_win'] >= self.peak_heavy_mem_threshold) & is_active_sql
                     
-                    # Also include any item that has significant Lock Wait impact even if SQL is 0?
-                    # No, this loop is for top_sql. Pure lock items go to top_locks later via full_peak_df.
-                    merged['is_sql_candidate'] = is_top_10_time | is_slow_avg | is_heavy_mem
+                    # Selection logic:
+                    # 1. Top 10% by total execution time (high-volume queries), OR
+                    # 2. Both slow average AND heavy memory (resource-intensive queries)
+                    # This filters out system metadata queries that are slow but use minimal memory.
+                    merged['is_sql_candidate'] = is_top_10_time | (is_slow_avg & is_heavy_mem)
                 else:
                     merged['is_sql_candidate'] = False
                 
@@ -373,15 +550,37 @@ class SAPDataProcessor:
             top_sql = full_peak_df[full_peak_df.get('is_sql_candidate', False) == True].sort_values(['PEAK_PERIOD', 'PRIORITY'], ascending=[True, False]).groupby('PEAK_PERIOD').head(3).reset_index(drop=True)
             
             # 2. Top Locks: Based on strict AND Baselines
-            lock_thr = full_peak_df['TOTAL_LOCK_WAIT_SEC_peak'].quantile(0.9)
+            lock_quantile = min(1.0, max(0.0, self.lock_top_quantile))
+            lock_thr = full_peak_df['TOTAL_LOCK_WAIT_SEC_peak'].quantile(lock_quantile)
             is_positive_lock = (full_peak_df['TOTAL_LOCK_WAIT_SEC_peak'] > 0)
-            is_high_ratio_lock = (full_peak_df['LOCK_WAIT_RATIO_peak'] >= 0.3)
+            is_high_ratio_lock = (full_peak_df['LOCK_WAIT_RATIO_peak'] >= self.lock_ratio_threshold)
             is_top_10_lock = (full_peak_df['TOTAL_LOCK_WAIT_SEC_peak'] >= lock_thr)
             
             is_active = (full_peak_df['EXEC_COUNT_peak'] > 0) | (full_peak_df['TOTAL_MEM_peak'] > 0)
             is_lock_candidate = is_positive_lock & is_high_ratio_lock & is_top_10_lock & is_active
             top_locks = full_peak_df[is_lock_candidate].copy()
-            top_locks = top_locks.sort_values(['PEAK_PERIOD', 'TOTAL_LOCK_WAIT_SEC_peak'], ascending=[True, False]).groupby('PEAK_PERIOD').head(3).reset_index(drop=True)
+            top_locks = top_locks.sort_values(['PEAK_PERIOD', 'TOTAL_LOCK_WAIT_SEC_peak'], ascending=[True, False]).groupby('PEAK_PERIOD').head(self.lock_top_per_peak).reset_index(drop=True)
+            lock_selection_mode = "strict"
+
+            # Fallback: if strict lock baselines remove all rows, still report strongest lock events.
+            if top_locks.empty:
+                relaxed_lock_df = full_peak_df[is_positive_lock].copy()
+                if not relaxed_lock_df.empty:
+                    top_locks = (
+                        relaxed_lock_df
+                        .sort_values(['PEAK_PERIOD', 'TOTAL_LOCK_WAIT_SEC_peak', 'LOCK_WAIT_RATIO_peak'], ascending=[True, False, False])
+                        .groupby('PEAK_PERIOD')
+                        .head(self.lock_top_per_peak)
+                        .reset_index(drop=True)
+                    )
+                    lock_selection_mode = "relaxed"
+                else:
+                    lock_selection_mode = "none"
+
+            top_locks.attrs['selection_mode'] = lock_selection_mode
+            top_locks.attrs['ratio_threshold'] = self.lock_ratio_threshold
+            top_locks.attrs['quantile_threshold'] = lock_quantile
+            top_locks.attrs['top_per_peak'] = self.lock_top_per_peak
 
             # 3. Global Top 10: For Section 8 (Comprehensive Diagnosis)
             # Strategy: Strictly use only the items ALREADY displayed in Section 6 and Section 7
@@ -400,9 +599,14 @@ class SAPDataProcessor:
         return top_sql, top_locks
     def get_summary_stats(self, cpu_df):
         if cpu_df is None or cpu_df.empty: return {}
+        date_value = datetime.now().strftime('%Y-%m-%d')
+        if 'TIMESTAMP' in cpu_df.columns:
+            ts_series = pd.to_datetime(cpu_df['TIMESTAMP'], errors='coerce').dropna()
+            if not ts_series.empty:
+                date_value = ts_series.min().strftime('%Y-%m-%d')
         return {
-            'date': cpu_df['TIMESTAMP'].min().strftime('%Y-%m-%d'),
-            'cpu_avg': cpu_df['CPU'].mean(), 'cpu_max': cpu_df['CPU'].max(),
+            'date': date_value,
+            'cpu_avg': cpu_df['CPU'].mean(), 'cpu_max': cpu_df['CPU'].max(), 'cpu_min': cpu_df['CPU'].min(),
             'cpu_p95': cpu_df['CPU'].quantile(0.95),
             'mem_avg_pct': cpu_df['MEMORY_PCT'].mean() if 'MEMORY_PCT' in cpu_df.columns else 0,
             'high_load_count': len(cpu_df[cpu_df['CPU'] >= 80]),
