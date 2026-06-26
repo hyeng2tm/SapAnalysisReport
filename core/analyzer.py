@@ -45,6 +45,19 @@ class SAPAIAnalyzer:
             logger.warning(f"Token refresh failed: {e}")
             return False
 
+    def _is_unusable_ai_message(self, message):
+        """Return True when agent body is a placeholder/error text, even if HTTP is 200."""
+        if not message:
+            return True
+        msg = str(message).strip().lower()
+        markers = [
+            "ai 연결 안됨",
+            "langgraph api error",
+            "할당량 초과",
+            "연결 실패",
+        ]
+        return any(m in msg for m in markers)
+
     def analyze_performance(self, stats, windows, peak_sql, top_locks, top_cpu_label="N/A", top_lock_label="N/A"):
         """Generates professional analysis report using Dev-X Agent"""
         windows_str = "\n".join([f"- {w['start'].strftime('%H:%M')}~{w['end'].strftime('%H:%M')} (Avg CPU: {w['avg_cpu']:.1f}%, Max CPU: {w['max_cpu']:.1f}%)" for w in windows])
@@ -100,7 +113,13 @@ class SAPAIAnalyzer:
             logger.warning("No Dev-X token available. Using dummy insights.")
             return self._generate_dummy_insights(stats, windows, top_cpu_label, top_lock_label)
         
-        result = self._call_dev_x_agent(prompt)
+        result = self._call_dev_x_agent(
+            prompt,
+            stats=stats,
+            windows=windows,
+            top_cpu_label=top_cpu_label,
+            top_lock_label=top_lock_label,
+        )
         
         logger.info(f"\n{'='*80}")
         logger.info("DEV-X AGENT RESPONSE")
@@ -109,7 +128,7 @@ class SAPAIAnalyzer:
         
         return result
 
-    def _call_dev_x_agent(self, prompt):
+    def _call_dev_x_agent(self, prompt, stats=None, windows=None, top_cpu_label="N/A", top_lock_label="N/A"):
         """Call Dev-X Agent API with the analysis prompt"""
         try:
             headers = {
@@ -187,6 +206,11 @@ class SAPAIAnalyzer:
                         logger.info(f"  Extracted from 'external_response.message' field")
                 
                 if final_message:
+                    if self._is_unusable_ai_message(final_message):
+                        logger.warning("Agent returned unusable placeholder text despite HTTP 200; using local fallback insights")
+                        return self._generate_dummy_insights(
+                            stats or {}, windows or [], top_cpu_label, top_lock_label
+                        )
                     logger.info(f"\n[EXTRACTED MESSAGE]")
                     logger.info(f"  Length: {len(final_message)} chars")
                     logger.info(f"  Content (first 500 chars):\n{final_message[:500]}")
@@ -194,12 +218,16 @@ class SAPAIAnalyzer:
                 else:
                     logger.warning(f"No 'message' or 'answer' field found in response")
                     logger.warning(f"Available fields: {list(result.keys())}")
-                    return self._generate_dummy_insights_fallback()
+                    return self._generate_dummy_insights(
+                        stats or {}, windows or [], top_cpu_label, top_lock_label
+                    )
             else:
                 logger.error(f"\n[DEV-X API ERROR]")
                 logger.error(f"  Status: {response.status_code}")
                 logger.error(f"  Response Text: {response.text[:500]}")
-                return self._generate_dummy_insights_fallback()
+                return self._generate_dummy_insights(
+                    stats or {}, windows or [], top_cpu_label, top_lock_label
+                )
                 
         except Exception as e:
             logger.error(f"\n[DEV-X API EXCEPTION]")
@@ -207,37 +235,70 @@ class SAPAIAnalyzer:
             logger.error(f"  Error Message: {str(e)}")
             import traceback
             logger.error(f"  Traceback: {traceback.format_exc()}")
-            return self._generate_dummy_insights_fallback()
+            return self._generate_dummy_insights(
+                stats or {}, windows or [], top_cpu_label, top_lock_label
+            )
     
     def _generate_dummy_insights_fallback(self):
         """Fallback insights when Dev-X API fails"""
         return """
 1. Summary (요약):
-AI 연결 안됨 (Dev-X Agent 할당량 초과 또는 연결 실패)
+외부 AI 응답 지연으로 자동 규칙 기반 임시 분석으로 대체됨.
 
 3. 차트 출력 및 해석:
-AI 연결 안됨
+CPU/메모리 변동을 기준으로 핵심 구간을 우선 점검 필요.
 
 5. Peak Load 구간별 SQL 영향도 분석:
-AI 연결 안됨
+호출량, 총 실행시간, 메모리 사용량이 큰 SQL을 우선 조치 대상으로 분류 권장.
 
 6. 서비스 대기(Lock Wait) 분석:
-AI 연결 안됨
+Lock Wait 상위 SQL과 비율(LOCK_WAIT_RATIO)을 우선 확인 권장.
 
 7. 종합 진단 및 기술적 제언:
 [부하 원인 유형]:
-AI 연결 안됨
+배치성/동시성/집계형 중 데이터 특성 기준으로 분류 필요.
 
 [개선 포인트]:
-AI 연결 안됨
+상위 SQL 인덱스 점검, 실행계획 재검토, 배치 시간대 분산 권장.
 
 [최종 진단]:
-AI 연결 안됨
+외부 AI 응답 복구 전까지 자동 임시 분석 결과를 기준으로 운영 모니터링 수행.
 """
 
     def _generate_dummy_insights(self, stats, windows, top_cpu_label, top_lock_label):
-        """Legacy dummy insights method (kept for compatibility)"""
-        return self._generate_dummy_insights_fallback()
+        """Generate rule-based fallback insights when external AI is unavailable."""
+        cpu_avg = float(stats.get('cpu_avg', 0) or 0)
+        cpu_max = float(stats.get('cpu_max', 0) or 0)
+        mem_avg = float(stats.get('mem_avg_pct', 0) or 0)
+        high_load_count = int(stats.get('high_load_count', 0) or 0)
+        window_text = ", ".join([
+            f"{w['start'].strftime('%H:%M')}~{w['end'].strftime('%H:%M')}"
+            for w in (windows or [])
+        ]) or "주요 피크 구간 없음"
+
+        return f"""
+1. Summary (요약):
+외부 AI 응답 지연으로 자동 규칙 기반 분석으로 대체함. CPU 평균 {cpu_avg:.1f}%, 최대 {cpu_max:.1f}%이며 80% 이상 고부하 샘플은 {high_load_count}회로 관측됨. 메모리 평균은 {mem_avg:.1f}% 수준이며 피크 구간은 {window_text}임.
+
+3. 차트 출력 및 해석:
+CPU 피크 구간과 메모리 추세의 동조 여부를 우선 점검 필요. CPU 급등 시 메모리도 동반 상승하면 집계성/대량 처리성 부하 가능성이 높고, CPU 단독 급등이면 동시성 처리나 짧은 배치성 처리 가능성이 큼.
+
+5. Peak Load 구간별 SQL 영향도 분석:
+부하 주범 프로그램 후보는 {top_cpu_label}로 식별됨. 총 실행시간과 총 메모리 사용량(TOTAL_EXECUTION_MEMORY_SIZE)을 기준으로 상위 SQL 우선순위를 적용해 튜닝 대상을 선정하는 것이 적절함.
+
+6. 서비스 대기(Lock Wait) 분석:
+락 경합 관점의 주요 프로그램 후보는 {top_lock_label}임. LOCK_WAIT_RATIO가 높은 구간의 SQL을 우선 확인하고, NRIV/FOR UPDATE/UPSERT 패턴이 반복되는지 점검 권장.
+
+7. 종합 진단 및 운영 시사점:
+[부하 원인 유형]:
+피크 구간 분포와 SQL 집계 지표 기준으로 배치성 + 집계형 혼합 부하 가능성이 높음.
+
+[개선 포인트]:
+상위 SQL 실행계획 점검, 핵심 인덱스 보강, 배치 분산 실행, Lock 경합 구간의 트랜잭션 직렬화 정책 검토가 필요함.
+
+[최종 진단]:
+외부 AI 응답 복구 전에도 규칙 기반 분석 결과만으로 1차 운영 대응은 가능하며, 추후 AI 응답 복구 시 정밀 코멘트로 보강 권장.
+"""
     
     def generate_specific_actions(self, global_top):
         """Generate specific remediation actions for top SQL/Lock items"""

@@ -14,17 +14,31 @@ class SAPDataProcessor:
         self.dfs = {}
         self.loaded_file_paths = []
         self.lock_ratio_threshold = self._get_env_float("LOCK_WAIT_RATIO_THRESHOLD", 0.3)
+        self.lock_weight_ratio_threshold = self._get_env_float("LOCK_WEIGHT_RATIO_THRESHOLD", 0.3)
+        self.lock_weight_high = self._get_env_float("LOCK_WEIGHT_HIGH", 0.25)
+        self.lock_weight_low = self._get_env_float("LOCK_WEIGHT_LOW", 0.10)
+        self.cpu_score_weight = self._get_env_float("CPU_SCORE_WEIGHT", 0.08)
+        self.peak_share_weight = self._get_env_float("PEAK_SHARE_WEIGHT", 0.30)
+        self.mem_score_weight = self._get_env_float("MEM_SCORE_WEIGHT", 0.20)
+        self.spike_score_weight = self._get_env_float("SPIKE_SCORE_WEIGHT", 0.15)
         self.lock_top_quantile = self._get_env_float("LOCK_WAIT_TOP_QUANTILE", 0.9)
         self.lock_top_per_peak = max(1, int(self._get_env_float("LOCK_WAIT_TOP_PER_PEAK", 3)))
+        self.peak_top_sql_per_peak = max(1, self._get_env_int("PEAK_TOP_SQL_PER_PEAK", 3))
         self.peak_weight_max = self._get_env_float("PEAK_WEIGHT_MAX", 0.45)
         self.peak_weight_avg = self._get_env_float("PEAK_WEIGHT_AVG", 0.35)
         self.peak_weight_duration = self._get_env_float("PEAK_WEIGHT_DURATION", 0.20)
         self.peak_reliability_samples = max(1, int(self._get_env_float("PEAK_RELIABILITY_SAMPLES", 5)))
         self.peak_window_limit = self._get_env_int("PEAK_WINDOW_LIMIT", 0)
+        # Default 30 min buffer keeps behavior close to previous fallback matching.
+        self.peak_sql_window_buffer_minutes = max(0, self._get_env_int("PEAK_SQL_WINDOW_BUFFER_MINUTES", 30))
         self.peak_min_samples = max(1, self._get_env_int("PEAK_MIN_SAMPLES", 5))
         self.peak_min_duration_minutes = max(0, int(self._get_env_int("PEAK_MIN_DURATION_MINUTES", 10)))
-        # Heavy memory threshold (bytes): default 1GB, configurable via PEAK_HEAVY_MEM_GB_THRESHOLD
-        heavy_mem_gb = max(0.1, float(self._get_env_float("PEAK_HEAVY_MEM_GB_THRESHOLD", 1.0)))
+        # Heavy total execution memory threshold (bytes): default 1GB.
+        # Prefer PEAK_HEAVY_TOTAL_MEM_GB_THRESHOLD and keep PEAK_HEAVY_MEM_GB_THRESHOLD for compatibility.
+        heavy_mem_gb = max(
+            0.1,
+            float(self._get_env_float("PEAK_HEAVY_TOTAL_MEM_GB_THRESHOLD", self._get_env_float("PEAK_HEAVY_MEM_GB_THRESHOLD", 1.0)))
+        )
         self.peak_heavy_mem_threshold = int(heavy_mem_gb * 1024 * 1024 * 1024)
         # Slow SQL average execution time threshold (seconds): default 10s, configurable via PEAK_SLOW_AVG_SEC_THRESHOLD
         self.peak_slow_avg_sec_threshold = max(0.1, float(self._get_env_float("PEAK_SLOW_AVG_SEC_THRESHOLD", 10.0)))
@@ -393,7 +407,7 @@ class SAPDataProcessor:
                 df = pd.DataFrame()
             else:
                 # Ensure required metric columns exist to avoid KeyError during groupby/aggregation.
-                for required in ['TOTAL_EXEC_TIME_SEC', 'TOTAL_EXECUTION_MEMORY_SIZE', 'EXEC_COUNT', 'MAX_EXECUTION_MEMORY_SIZE', 'MAX_EXEC_TIME_SEC']:
+                for required in ['TOTAL_EXEC_TIME_SEC', 'TOTAL_EXECUTION_MEMORY_SIZE', 'EXEC_COUNT', 'MAX_EXECUTION_MEMORY_SIZE', 'MAX_EXEC_TIME_SEC', 'CPU_TIME']:
                     if required not in df.columns:
                         df[required] = 0
 
@@ -407,14 +421,15 @@ class SAPDataProcessor:
                 num_cols = {
                     'TOTAL_EXEC_TIME_SEC': 'TIME_DELTA',
                     'TOTAL_EXECUTION_MEMORY_SIZE': 'MEM_DELTA',
-                    'EXEC_COUNT': 'COUNT_DELTA'
+                    'EXEC_COUNT': 'COUNT_DELTA',
+                    'CPU_TIME': 'CPU_DELTA'
                 }
                 for src, target in num_cols.items():
                     if src in df.columns:
                         df[target] = df[src].apply(self._to_num).fillna(0)
 
                 # Ensure other metrics are numeric too
-                for c in ['MAX_EXECUTION_MEMORY_SIZE', 'MAX_EXEC_TIME_SEC']:
+                for c in ['MAX_EXECUTION_MEMORY_SIZE', 'MAX_EXEC_TIME_SEC', 'CPU_TIME']:
                     if c in df.columns:
                         df[c] = df[c].apply(self._to_num).fillna(0)
 
@@ -459,30 +474,20 @@ class SAPDataProcessor:
             w_start = w['start']
             w_end_ext = w['end']
             p_label = f"{w['start'].strftime('%H:%M')}~{w['end'].strftime('%H:%M')}"
+            from datetime import timedelta
+            window_buffer = timedelta(minutes=self.peak_sql_window_buffer_minutes)
+            query_start = w_start - window_buffer
+            query_end = w_end_ext + window_buffer
             
             # SQL candidates in this window
-            w_sql = sql_df[(sql_df['TIMESTAMP'] >= w_start) & (sql_df['TIMESTAMP'] <= w_end_ext)].copy() if not sql_df.empty else pd.DataFrame()
-            
-            # Fallback: if no data in exact window, expand buffer to ±30 minutes to catch snapshot data
-            if w_sql.empty and not sql_df.empty:
-                from datetime import timedelta
-                w_start_ext = w_start - timedelta(minutes=30)
-                w_end_ext_wide = w_end_ext + timedelta(minutes=30)
-                w_sql = sql_df[(sql_df['TIMESTAMP'] >= w_start_ext) & (sql_df['TIMESTAMP'] <= w_end_ext_wide)].copy()
+            w_sql = sql_df[(sql_df['TIMESTAMP'] >= query_start) & (sql_df['TIMESTAMP'] <= query_end)].copy() if not sql_df.empty else pd.DataFrame()
             
             if not w_sql.empty:
                 w_sql['PROGRAM_LABEL'] = w_sql.apply(get_label, axis=1)
                 w_sql['SQL_LABEL'] = w_sql['SQL_TEXT'].apply(self.normalize_sql)
             
             # Lock candidates in this window 
-            w_lock = lock_df[(lock_df['TIMESTAMP'] >= w_start) & (lock_df['TIMESTAMP'] <= w_end_ext)].copy() if not lock_df.empty else pd.DataFrame()
-            
-            # Fallback: if no data in exact window, expand buffer to ±30 minutes
-            if w_lock.empty and not lock_df.empty:
-                from datetime import timedelta
-                w_start_ext = w_start - timedelta(minutes=30)
-                w_end_ext_wide = w_end_ext + timedelta(minutes=30)
-                w_lock = lock_df[(lock_df['TIMESTAMP'] >= w_start_ext) & (lock_df['TIMESTAMP'] <= w_end_ext_wide)].copy()
+            w_lock = lock_df[(lock_df['TIMESTAMP'] >= query_start) & (lock_df['TIMESTAMP'] <= query_end)].copy() if not lock_df.empty else pd.DataFrame()
             
             if not w_lock.empty:
                 w_lock['PROGRAM_LABEL'] = w_lock.apply(get_label, axis=1)
@@ -495,6 +500,7 @@ class SAPDataProcessor:
                     EXEC_TIME_win=('TIME_DELTA', 'sum'),
                     EXEC_COUNT_win=('COUNT_DELTA', 'sum'),
                     MEM_win=('MEM_DELTA', 'sum'),
+                    CPU_TIME_win=('CPU_DELTA', 'sum'),
                     MAX_MEM_win=('MAX_EXECUTION_MEMORY_SIZE', 'max'),
                     MAX_EXEC_TIME_win=('MAX_EXEC_TIME_SEC', 'max')
                 ).reset_index()
@@ -502,7 +508,7 @@ class SAPDataProcessor:
                 g_sql['AVG_EXEC_TIME_win'] = g_sql['EXEC_TIME_win'] / g_sql['EXEC_COUNT_win'].replace(0, 1)
                 g_sql['AVG_MEM_win'] = g_sql['MEM_win'] / g_sql['EXEC_COUNT_win'].replace(0, 1)
             else:
-                g_sql = pd.DataFrame(columns=['PROGRAM_LABEL', 'SQL_LABEL', 'EXEC_TIME_win', 'EXEC_COUNT_win', 'MEM_win', 'MAX_MEM_win', 'MAX_EXEC_TIME_win', 'AVG_EXEC_TIME_win', 'AVG_MEM_win'])
+                g_sql = pd.DataFrame(columns=['PROGRAM_LABEL', 'SQL_LABEL', 'EXEC_TIME_win', 'EXEC_COUNT_win', 'MEM_win', 'CPU_TIME_win', 'MAX_MEM_win', 'MAX_EXEC_TIME_win', 'AVG_EXEC_TIME_win', 'AVG_MEM_win'])
 
             if not w_lock.empty:
                 g_lock = w_lock.groupby(['PROGRAM_LABEL', 'SQL_LABEL']).agg(
@@ -523,6 +529,9 @@ class SAPDataProcessor:
                 merged['spike_ratio'] = (merged['MAX_EXEC_TIME_win'] / merged['AVG_EXEC_TIME_win'].replace(0, 1e-6)).clip(upper=10)
                 merged['lock_ratio'] = (merged['LOCK_TIME_win'] / merged['LOCK_EXEC_TIME_win'].replace(0, 1e-6))
                 merged['peak_share'] = merged['EXEC_TIME_win'] / merged['EXEC_TIME_win'].sum() if merged['EXEC_TIME_win'].sum() > 0 else 0
+                # CPU score uses SQL-level CPU time when available.
+                cpu_min, cpu_max = merged['CPU_TIME_win'].min(), merged['CPU_TIME_win'].max()
+                merged['cpu_score'] = (merged['CPU_TIME_win'] - cpu_min) / (cpu_max - cpu_min + 1e-9)
                 
                 # 2) Min-Max Normalization (Internal Window Context)
                 norm_cols = ['MAX_MEM_win', 'MEM_win', 'spike_ratio', 'EXEC_COUNT_win', 'LOCK_TIME_win', 'lock_ratio']
@@ -535,13 +544,29 @@ class SAPDataProcessor:
                 merged['spike_score'] = merged['norm_spike_ratio']
                 merged['chatty_score'] = (merged['norm_EXEC_COUNT_win'] * merged['AVG_EXEC_TIME_win']).rank(pct=True)
                 merged['lock_score'] = 0.5 * merged['norm_LOCK_TIME_win'] + 0.5 * merged['norm_lock_ratio']
+                # Micro tuning: slightly soften lock dominance and raise CPU influence.
+                merged['lock_weight'] = np.where(merged['lock_ratio'] > self.lock_weight_ratio_threshold, self.lock_weight_high, self.lock_weight_low)
                 
-                # 4) Final Weighted PRIORITY (50/20/15/10/5)
-                merged['PRIORITY'] = (0.50 * merged['peak_share'] +
-                                     0.20 * merged['mem_score'] +
-                                     0.15 * merged['spike_score'] +
-                                     0.10 * merged['chatty_score'] +
-                                     0.05 * merged['lock_score'])
+                # 4) Final Weighted PRIORITY
+                # Requested dynamic lock weight:
+                # if lock_ratio > 0.3: lock_weight=0.30 else 0.15
+                # Normalize by total weight to keep PRIORITY scale stable.
+                base_score = (self.peak_share_weight * merged['peak_share'] +
+                              merged['lock_weight'] * merged['lock_score'] +
+                              self.mem_score_weight * merged['mem_score'] +
+                              self.spike_score_weight * merged['spike_score'] +
+                              0.10 * merged['chatty_score'] +
+                              self.cpu_score_weight * merged['cpu_score'])
+                total_weight = (self.peak_share_weight + self.mem_score_weight + self.spike_score_weight + 0.10 + self.cpu_score_weight) + merged['lock_weight']
+                merged['PRIORITY'] = base_score / total_weight.replace(0, 1)
+
+                # Tail-aware bonus: emphasize top 5% execution-time statements in each window.
+                # This is more robust than fixed average-time thresholding.
+                exec_q95 = merged['EXEC_TIME_win'].quantile(0.95)
+                merged['PRIORITY'] = (
+                    merged['PRIORITY']
+                    + np.where(merged['EXEC_TIME_win'] >= exec_q95, 0.10, 0.0)
+                )
 
             
             # Final filtering: Noise reduction (Apply window-specific rules)
@@ -552,11 +577,16 @@ class SAPDataProcessor:
                 # 2. Apply the 'Big 3' baselines only to active SQL
                 active_sql_df = merged[is_active_sql]
                 if not active_sql_df.empty:
-                    # Quantile 0.9 of total execution time within THIS window's active set
-                    time_q90 = active_sql_df['EXEC_TIME_win'].quantile(0.9)
-                    is_top_10_time = (merged['EXEC_TIME_win'] >= time_q90) & is_active_sql
+                    # Top 10% by rank to avoid quantile-tie explosion on repeated values.
+                    exec_time_rank_pct = active_sql_df['EXEC_TIME_win'].rank(pct=True, method='average')
+                    active_sql_df = active_sql_df.assign(exec_time_rank_pct=exec_time_rank_pct)
+                    rank_map = active_sql_df.set_index(['PROGRAM_LABEL', 'SQL_LABEL'])['exec_time_rank_pct']
+                    merged_idx = list(zip(merged['PROGRAM_LABEL'], merged['SQL_LABEL']))
+                    merged_rank_pct = pd.Series([rank_map.get(idx, 0.0) for idx in merged_idx], index=merged.index)
+                    is_top_10_time = (merged_rank_pct >= 0.90) & is_active_sql
                     is_slow_avg = (merged['AVG_EXEC_TIME_win'] >= self.peak_slow_avg_sec_threshold) & is_active_sql
-                    is_heavy_mem = (merged['MAX_MEM_win'] >= self.peak_heavy_mem_threshold) & is_active_sql
+                    # Use TOTAL execution memory as heavy-memory baseline (requested behavior).
+                    is_heavy_mem = (merged['MEM_win'] >= self.peak_heavy_mem_threshold) & is_active_sql
                     
                     # Selection logic:
                     # 1. Top 10% by total execution time (high-volume queries), OR
@@ -573,7 +603,7 @@ class SAPDataProcessor:
             
             def map_rca(r):
                 if r['LOCK_TIME_win'] > 100 or "NRIV" in str(r['SQL_LABEL']): return "동시성(락): 테이블 경합"
-                if r['MAX_MEM_win'] > 1024*1024*1024: return "대량 집계 / 전체 스캔"
+                if r['MEM_win'] > 1024*1024*1024: return "대량 집계 / 전체 스캔"
                 return "고부하 트랜잭션 도출"
 
             full_peak_df['CAUSE'] = full_peak_df.apply(map_rca, axis=1)
@@ -596,9 +626,9 @@ class SAPDataProcessor:
             # Calculate Lock Wait Ratio strictly based on window totals
             full_peak_df['LOCK_WAIT_RATIO_peak'] = full_peak_df['TOTAL_LOCK_WAIT_SEC_peak'] / full_peak_df['TOTAL_EXEC_TIME_SEC_lock'].replace(0, 1e-6)
             
-            # 1. Top SQL: Top 3 per peak window as requested for visual cell merging
+            # 1. Top SQL: Configurable top N per peak window
             # We already tagged candidates inside the loop relative to their windows
-            top_sql = full_peak_df[full_peak_df.get('is_sql_candidate', False) == True].sort_values(['PEAK_PERIOD', 'PRIORITY'], ascending=[True, False]).groupby('PEAK_PERIOD').head(3).reset_index(drop=True)
+            top_sql = full_peak_df[full_peak_df.get('is_sql_candidate', False) == True].sort_values(['PEAK_PERIOD', 'PRIORITY'], ascending=[True, False]).groupby('PEAK_PERIOD').head(self.peak_top_sql_per_peak).reset_index(drop=True)
             
             # 2. Top Locks: Based on strict AND Baselines
             lock_quantile = min(1.0, max(0.0, self.lock_top_quantile))

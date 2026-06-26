@@ -38,22 +38,51 @@ class SAPReporter:
 
     def _build_operational_cause_rows(self, cause_text, top_sql, top_locks):
         normalized = str(cause_text or "")
+
+        # 배치성 부하: AI 텍스트 OR 실행건수 10,000회 이상인 SQL이 상위에 존재하면 '해당'
+        is_batch_ai = "배치" in normalized
+        is_batch_data = False
+        if top_sql is not None and not top_sql.empty and 'EXEC_COUNT_peak' in top_sql.columns:
+            is_batch_data = bool((top_sql['EXEC_COUNT_peak'] >= 10000).any())
+        batch_status = "해당" if (is_batch_ai or is_batch_data) else "점검 필요"
+        batch_basis = "피크 시간대에 반복 실행되는 배치성 SQL 및 대량 처리 작업 여부 확인 필요"
+        if is_batch_data and top_sql is not None and not top_sql.empty:
+            top_batch = top_sql.sort_values('EXEC_COUNT_peak', ascending=False).iloc[0]
+            prog = str(top_batch.get('PROGRAM_LABEL', ''))[:30]
+            cnt  = int(top_batch.get('EXEC_COUNT_peak', 0))
+            batch_basis = f"{prog} 등 {cnt:,}회 반복 실행 확인 — 배치/반복 호출성 SQL 집중 점검 필요"
+
+        # 동시성 및 Lock: AI 텍스트 OR top_locks 데이터 존재
+        is_lock_ai   = "동시성" in normalized or "락" in normalized
+        is_lock_data = top_locks is not None and not top_locks.empty
+        lock_status  = "해당" if (is_lock_ai or is_lock_data) else "낮음"
+        lock_basis   = "Lock Wait 상위 항목 및 FOR UPDATE/UPSERT/채번 구문 사용 여부 기준"
+        if is_lock_data:
+            top_lock_row = top_locks.sort_values('TOTAL_LOCK_WAIT_SEC_peak', ascending=False).iloc[0]
+            lock_prog = str(top_lock_row.get('PROGRAM_LABEL', ''))[:30]
+            lock_sec  = float(top_lock_row.get('TOTAL_LOCK_WAIT_SEC_peak', 0))
+            lock_basis = f"{lock_prog} Lock Wait {lock_sec:,.1f}sec 확인 — 채번·트랜잭션 직렬화 점검 필요"
+
+        # 대량 집계 및 스캔: AI 텍스트 OR CAUSE 컬럼에 '집계'/'스캔' 포함 OR 총 메모리 ≥ 1GB SQL 존재
+        is_scan_ai   = "집계" in normalized or "스캔" in normalized
+        is_scan_data = False
+        if top_sql is not None and not top_sql.empty:
+            if 'CAUSE' in top_sql.columns:
+                is_scan_data = top_sql['CAUSE'].astype(str).str.contains('집계|스캔').any()
+            if not is_scan_data and 'TOTAL_MEM_peak' in top_sql.columns:
+                is_scan_data = bool((top_sql['TOTAL_MEM_peak'] >= 1024**3).any())
+        scan_status = "해당" if (is_scan_ai or is_scan_data) else "점검 필요"
+        scan_basis  = "집계성 조회, 대량 읽기/쓰기, 메모리 사용량이 큰 SQL 존재 여부 기준"
+        if is_scan_data and top_sql is not None and not top_sql.empty:
+            top_mem = top_sql.sort_values('TOTAL_MEM_peak', ascending=False).iloc[0]
+            mem_prog = str(top_mem.get('PROGRAM_LABEL', ''))[:30]
+            mem_gb   = float(top_mem.get('TOTAL_MEM_peak', 0)) / (1024**3)
+            scan_basis = f"{mem_prog} 총 {mem_gb:,.1f}GB 메모리 사용 — 풀스캔·집계 플랜 최적화 필요"
+
         rows = [
-            {
-                "category": "배치성 부하",
-                "status": "해당" if "배치" in normalized else "점검 필요",
-                "basis": "피크 시간대에 반복 실행되는 배치성 SQL 및 대량 처리 작업 여부 확인 필요",
-            },
-            {
-                "category": "동시성 및 Lock",
-                "status": "해당" if ("동시성" in normalized or "락" in normalized or (top_locks is not None and not top_locks.empty)) else "낮음",
-                "basis": "Lock Wait 상위 항목 및 FOR UPDATE/UPSERT/채번 구문 사용 여부 기준",
-            },
-            {
-                "category": "대량 집계 및 스캔",
-                "status": "해당" if ("집계" in normalized or "스캔" in normalized or (top_sql is not None and not top_sql.empty)) else "점검 필요",
-                "basis": "집계성 조회, 대량 읽기/쓰기, 메모리 사용량이 큰 SQL 존재 여부 기준",
-            },
+            {"category": "배치성 부하",     "status": batch_status, "basis": batch_basis},
+            {"category": "동시성 및 Lock",  "status": lock_status,  "basis": lock_basis},
+            {"category": "대량 집계 및 스캔", "status": scan_status,  "basis": scan_basis},
         ]
         return rows
 
@@ -131,8 +160,15 @@ class SAPReporter:
         return rows
 
     def _build_operational_diagnosis_rows(self, stats, windows, top_sql, top_locks, diagnosis_text):
-        source_program = str(top_sql.iloc[0].get('PROGRAM_LABEL', 'N/A')) if top_sql is not None and not top_sql.empty else 'N/A'
-        lock_program = str(top_locks.iloc[0].get('PROGRAM_LABEL', 'N/A')) if top_locks is not None and not top_locks.empty else 'N/A'
+        # Use globally highest PRIORITY program, not time-ordered first row.
+        if top_sql is not None and not top_sql.empty:
+            source_program = str(top_sql.sort_values('PRIORITY', ascending=False).iloc[0].get('PROGRAM_LABEL', 'N/A'))
+        else:
+            source_program = 'N/A'
+        if top_locks is not None and not top_locks.empty:
+            lock_program = str(top_locks.sort_values('TOTAL_LOCK_WAIT_SEC_peak', ascending=False).iloc[0].get('PROGRAM_LABEL', 'N/A'))
+        else:
+            lock_program = 'N/A'
         return [
             {"item": "종합 판단", "detail": diagnosis_text},
             {"item": "주요 피크 시간대", "detail": self._format_peak_windows(windows)},

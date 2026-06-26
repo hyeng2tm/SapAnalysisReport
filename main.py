@@ -209,8 +209,9 @@ def run_analysis(data_dir, output_dir, recipient_email=None):
     
     if top_sql is not None and not top_sql.empty:
         peak_sql_summary = _build_peak_sql_prompt_summary(top_sql)
-        # Explicitly extract the top business impacts for AI
-        top_cpu_label = str(top_sql.iloc[0]['PROGRAM_LABEL'])
+        # Use globally highest PRIORITY program as core load label for AI prompt.
+        # iloc[0] was time-ordered (first peak window), not priority-ordered.
+        top_cpu_label = str(top_sql.sort_values('PRIORITY', ascending=False).iloc[0]['PROGRAM_LABEL'])
     else:
         peak_sql_summary = "No significant SQL activity detected during peaks."
 
