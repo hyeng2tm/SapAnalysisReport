@@ -107,24 +107,75 @@ class SAPDataProcessor:
         try:
             if path.endswith('.csv'):
                 # Optimized for performance and Korean SAP exports
-                encodings = ['utf-8', 'cp949', 'utf-16']
+                # Try cp949 first since most SAP Korean exports use this encoding
+                encodings = ['cp949', 'utf-8', 'utf-16', 'latin1', 'euc-kr']
                 for enc in encodings:
                     try:
-                        # Try C engine first for speed
-                        df = pd.read_csv(path, sep='\t', engine='c', quoting=3, encoding=enc)
-                        if len(df.columns) >= 2:
-                            logger.info(f"Successfully loaded {path} with {enc} using C engine")
-                            return df
+                        # For SAP exports, try to find header row first
+                        skip_rows = self._find_csv_header_row(path, enc)
+                        if skip_rows is not None:
+                            try:
+                                # Try with tab separator first
+                                df = pd.read_csv(path, sep='\t', engine='c', quoting=3, 
+                                               encoding=enc, skiprows=skip_rows)
+                                if len(df.columns) >= 2:
+                                    logger.info(f"Successfully loaded {path} with {enc} using C engine (skipped {skip_rows} rows)")
+                                    return df
+                            except Exception:
+                                try:
+                                    # Try with auto-detection separator
+                                    df = pd.read_csv(path, sep=None, engine='python', quoting=3, 
+                                                   encoding=enc, skiprows=skip_rows)
+                                    if len(df.columns) >= 2:
+                                        logger.info(f"Successfully loaded {path} with {enc} using Python engine (auto separator, skipped {skip_rows} rows)")
+                                        return df
+                                except Exception:
+                                    continue
+                        else:
+                            # No header found, try standard approach
+                            try:
+                                df = pd.read_csv(path, sep='\t', engine='c', quoting=3, encoding=enc)
+                                if len(df.columns) >= 2:
+                                    logger.info(f"Successfully loaded {path} with {enc} using C engine")
+                                    return df
+                            except Exception:
+                                try:
+                                    df = pd.read_csv(path, sep=None, engine='python', quoting=3, encoding=enc)
+                                    if len(df.columns) >= 2:
+                                        logger.info(f"Successfully loaded {path} with {enc} using Python engine (auto separator)")
+                                        return df
+                                except Exception:
+                                    continue
                     except Exception:
                         continue
                 
-                # Ultimate fallback: Python engine with auto-separator
-                logger.warning(f"Falling back to Python engine for {path}")
-                return pd.read_csv(path, sep=None, engine='python', quoting=3)
+                # Last resort: Python engine with auto-separator and relaxed parsing
+                logger.warning(f"Falling back to Python engine with relaxed parsing for {path}")
+                try:
+                    df = pd.read_csv(path, sep=None, engine='python', quoting=3)
+                    if len(df.columns) >= 2:
+                        logger.info(f"Successfully loaded {path} with relaxed parsing")
+                        return df
+                except Exception as e2:
+                    logger.error(f"All loading attempts failed for {path}: {e2}")
+                
+                return pd.DataFrame()
             return pd.read_excel(path)
         except Exception as e:
             logger.error(f"Error loading {path}: {e}")
             return pd.DataFrame()
+
+    def _find_csv_header_row(self, path, encoding):
+        """Find the row number where actual CSV header starts (contains column names like HOST, TIME, CPU)."""
+        try:
+            with open(path, 'r', encoding=encoding, errors='ignore') as f:
+                for idx, line in enumerate(f):
+                    # Look for line with typical SAP export column names
+                    if any(col in line.upper() for col in ['HOST', 'TIME', 'CPU', 'TIMESTAMP', 'EXECUTION_TIME']):
+                        return idx
+            return None
+        except Exception:
+            return None
 
     def _to_num(self, s):
         """Standard helper to clean SAP numeric strings."""
