@@ -11,6 +11,7 @@ dist/
 .env
 
 # Project Data & Reports
+.anc/
 data/
 reports/
 automation.log
@@ -39,3 +40,6 @@ show_peaks.py
 archive/
 output/
 report/
+implementation_plan.md
+task.md
+walkthrough.md

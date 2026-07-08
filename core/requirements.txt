@@ -1,0 +1,10 @@
+
+fpdf2
+pandas
+numpy
+python-dotenv
+requests
+openpyxl
+matplotlib
+seaborn
+tqdm
