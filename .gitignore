@@ -36,8 +36,6 @@ qc.py
 show_peaks.py
 
 # Archive and output
-archive/
-output/
 report/
 implementation_plan.md
 task.md
