@@ -12,7 +12,6 @@ dist/
 
 # Project Data & Reports
 .anc/
-data/
 reports/
 automation.log
 *.pdf
